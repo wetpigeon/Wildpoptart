@@ -1,10 +1,11 @@
 // Wildpoptart Content Script - Page Observer and Question Detector
 
-console.log('===== VERSION 5.1.2 - Material UI Checkbox Fallback + Self-Healing =====');
+console.log('===== VERSION 5.1.2 - LEVEL 4 FULL: Fuzzy Similarity Matching =====');
 console.log('📊 To export question database, type: exportDB()');
 console.log('🧬 To view self-healing stats, type: viewHealings()');
 console.log('🤖 AUTO-FILL MODE: The bot will automatically progress through surveys without button clicks');
 console.log('[v5.1.2] Added Material UI checkbox fallback layer with self-healing selector learning');
+console.log('[LEVEL 4] Upgraded all text matching to use fuzzy token-based similarity (threshold: 0.8)');
 
 // State management
 let isActive = false;
@@ -1169,6 +1170,22 @@ function normalizeText(text) {
     .normalize('NFC')
     // Convert to lowercase for case-insensitive comparison
     .toLowerCase();
+}
+
+// 🔧 LEVEL 4 FUZZY SIMILARITY: Token-based similarity scoring
+// Returns a score between 0 and 1 based on word overlap ratio
+function similarity(a, b) {
+  const A = normalizeText(a);
+  const B = normalizeText(b);
+
+  if (!A || !B) return 0;
+  if (A === B) return 1;
+
+  const setA = new Set(A.split(' '));
+  const setB = new Set(B.split(' '));
+  const intersection = [...setA].filter(x => setB.has(x)).length;
+
+  return intersection / Math.max(setA.size, setB.size);
 }
 
 // Detect Quest Mindshare custom div-based questions
@@ -6647,13 +6664,15 @@ async function fillQuestion(question, answer) {
 
           console.log(`[CAROUSELAPP-MATRIX] Checking scale card: "${label}" against answer: "${answerText}"`);
 
-          // Check if this card's label matches the answer we're looking for
-          const labelNorm = normalizeText(label).toLowerCase();
-          const answerNorm = normalizeText(answerText).toLowerCase();
+          // 🔧 LEVEL 4: Use fuzzy similarity matching for CarouselApp matrix
+          const sim = similarity(answerText, label);
+          const isMatch = sim > 0.8;
 
-          const isMatch = labelNorm === answerNorm ||
-                         labelNorm.includes(answerNorm) ||
-                         answerNorm.includes(labelNorm);
+          if (isMatch && sim < 1.0) {
+            console.log(`[LEVEL 4 MATCH] CarouselApp: "${label}" ↔ "${answerText}" (sim=${sim.toFixed(2)})`);
+          } else if (!isMatch && sim > 0.5) {
+            console.log(`[LEVEL 4 NO MATCH] CarouselApp: "${label}" ↔ "${answerText}" (sim=${sim.toFixed(2)})`);
+          }
 
           if (isMatch) {
             console.log(`[CAROUSELAPP-MATRIX] ✓ Match found! Clicking scale card: "${label}"`);
@@ -6721,15 +6740,20 @@ async function fillQuestion(question, answer) {
           console.log(`[MATRIX] Checking checkbox ID="${checkbox.id}" label="${label}"`);
 
           // Check if this checkbox should be checked
+          // 🔧 LEVEL 4: Use fuzzy similarity matching for matrix checkboxes
           const shouldCheck = answersToCheck.some(ans => {
-            const answerLower = ans.toLowerCase();
             return question.columns.some(col => {
-              const colLabelLower = col.label.toLowerCase();
-              const labelLower = label.toLowerCase();
-              const matches = answerLower === colLabelLower || labelLower.includes(answerLower);
+              const labelSim = similarity(ans, label);
+              const colSim = similarity(ans, col.label);
+              const maxSim = Math.max(labelSim, colSim);
+              const matches = maxSim > 0.8;
+
               if (matches) {
-                console.log(`[MATRIX] Match found! label="${label}" matches answer="${ans}"`);
+                console.log(`[LEVEL 4 MATCH] Matrix: "${label}" ↔ "${ans}" (sim=${maxSim.toFixed(2)})`);
+              } else if (maxSim > 0.5) {
+                console.log(`[LEVEL 4 NO MATCH] Matrix: "${label}" ↔ "${ans}" (sim=${maxSim.toFixed(2)})`);
               }
+
               return matches;
             });
           });
@@ -7116,16 +7140,22 @@ async function fillQuestion(question, answer) {
 
           console.log(`[CONDITIONAL] Filling select dropdown with: "${answerValue}"`);
 
-          // 🔧 V1.9.58: Try to find matching option with Unicode normalization
+          // 🔧 LEVEL 4: Use fuzzy similarity matching for conditional select
           let matched = false;
-          const answerValueNorm = normalizeText(answerValue);
 
           for (const option of selectElement.options) {
-            const optTextNorm = normalizeText(option.text);
-            const optValueNorm = normalizeText(option.value);
+            const textSim = similarity(answerValue, option.text);
+            const valueSim = option.value ? similarity(answerValue, option.value) : 0;
+            const maxSim = Math.max(textSim, valueSim);
+            const isMatch = maxSim > 0.8;
 
-            if (option.value === answerValue || option.text === answerValue ||
-                optValueNorm === answerValueNorm || optTextNorm === answerValueNorm) {
+            if (isMatch && maxSim < 1.0) {
+              console.log(`[LEVEL 4 MATCH] Conditional: "${option.text}" ↔ "${answerValue}" (sim=${maxSim.toFixed(2)})`);
+            } else if (!isMatch && maxSim > 0.5) {
+              console.log(`[LEVEL 4 NO MATCH] Conditional: "${option.text}" ↔ "${answerValue}" (sim=${maxSim.toFixed(2)})`);
+            }
+
+            if (isMatch) {
               selectElement.value = option.value;
               matched = true;
               console.log(`[CONDITIONAL] ✓ Selected option: "${option.text}" (value: "${option.value}")`);
@@ -7203,10 +7233,21 @@ async function fillQuestion(question, answer) {
     for (const selectedAnswer of answersArray) {
       let matched = false;
 
-      // First try exact match
+      // 🔧 LEVEL 4: Use fuzzy similarity matching for DIV-SURVEY
       for (const opt of options) {
-        if (opt.label === selectedAnswer || opt.value === selectedAnswer) {
-          console.log(`[DIV-SURVEY] ✓ Exact match - Clicking option: "${opt.label}"`);
+        const labelSim = similarity(selectedAnswer, opt.label);
+        const valueSim = opt.value ? similarity(selectedAnswer, opt.value) : 0;
+        const maxSim = Math.max(labelSim, valueSim);
+        const isMatch = maxSim > 0.8;
+
+        if (isMatch && maxSim < 1.0) {
+          console.log(`[LEVEL 4 MATCH] DIV-Survey: "${opt.label}" ↔ "${selectedAnswer}" (sim=${maxSim.toFixed(2)})`);
+        } else if (!isMatch && maxSim > 0.5) {
+          console.log(`[LEVEL 4 NO MATCH] DIV-Survey: "${opt.label}" ↔ "${selectedAnswer}" (sim=${maxSim.toFixed(2)})`);
+        }
+
+        if (isMatch) {
+          console.log(`[DIV-SURVEY] ✓ Match - Clicking option: "${opt.label}"`);
           const optElement = opt.element;
           if (optElement) {
             // For Askia surveys, also update the hidden input
@@ -7223,37 +7264,6 @@ async function fillQuestion(question, answer) {
             matchedCount++;
             await sleep(200); // Small delay between clicks
             break;
-          }
-        }
-      }
-
-      // If no exact match, try partial match
-      if (!matched) {
-        console.log(`[DIV-SURVEY] No exact match, trying partial match for: "${selectedAnswer}"`);
-        for (const opt of options) {
-          const optLower = opt.label.toLowerCase();
-          const ansLower = selectedAnswer.toLowerCase();
-
-          if (optLower.includes(ansLower) || ansLower.includes(optLower) ||
-              hasSignificantOverlap(optLower, ansLower)) {
-            console.log(`[DIV-SURVEY] ✓ Partial match - Clicking option: "${opt.label}"`);
-            const optElement = opt.element;
-            if (optElement) {
-              // For Askia surveys, also update the hidden input
-              if (question.isAskia && question.hiddenInput) {
-                const value = opt.value || opt.label;
-                question.hiddenInput.value = value;
-                question.hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
-                console.log(`[DIV-SURVEY] ✓ Updated hidden input ${question.hiddenInput.id} = "${value}"`);
-              }
-
-              optElement.click();
-              optElement.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-              matched = true;
-              matchedCount++;
-              await sleep(200);
-              break;
-            }
           }
         }
       }
@@ -7287,10 +7297,21 @@ async function fillQuestion(question, answer) {
     for (const selectedAnswer of answersArray) {
       let matched = false;
 
-      // First try exact match
+      // 🔧 LEVEL 4: Use fuzzy similarity matching for QUEST
       for (const opt of options) {
-        if (opt.label === selectedAnswer || opt.value === selectedAnswer) {
-          console.log(`[QUEST] ✓ Exact match - Clicking option: "${opt.label}"`);
+        const labelSim = similarity(selectedAnswer, opt.label);
+        const valueSim = opt.value ? similarity(selectedAnswer, opt.value) : 0;
+        const maxSim = Math.max(labelSim, valueSim);
+        const isMatch = maxSim > 0.8;
+
+        if (isMatch && maxSim < 1.0) {
+          console.log(`[LEVEL 4 MATCH] Quest: "${opt.label}" ↔ "${selectedAnswer}" (sim=${maxSim.toFixed(2)})`);
+        } else if (!isMatch && maxSim > 0.5) {
+          console.log(`[LEVEL 4 NO MATCH] Quest: "${opt.label}" ↔ "${selectedAnswer}" (sim=${maxSim.toFixed(2)})`);
+        }
+
+        if (isMatch) {
+          console.log(`[QUEST] ✓ Match - Clicking option: "${opt.label}"`);
           const optElement = opt.element;
           if (optElement) {
             optElement.click();
@@ -7299,29 +7320,6 @@ async function fillQuestion(question, answer) {
             matchedCount++;
             await sleep(200); // Small delay between clicks
             break;
-          }
-        }
-      }
-
-      // If no exact match, try partial match
-      if (!matched) {
-        console.log(`[QUEST] No exact match, trying partial match for: "${selectedAnswer}"`);
-        for (const opt of options) {
-          const optLower = opt.label.toLowerCase();
-          const ansLower = selectedAnswer.toLowerCase();
-
-          if (optLower.includes(ansLower) || ansLower.includes(optLower) ||
-              hasSignificantOverlap(optLower, ansLower)) {
-            console.log(`[QUEST] ✓ Partial match - Clicking option: "${opt.label}"`);
-            const optElement = opt.element;
-            if (optElement) {
-              optElement.click();
-              optElement.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-              matched = true;
-              matchedCount++;
-              await sleep(200);
-              break;
-            }
           }
         }
       }
@@ -7667,15 +7665,19 @@ async function fillQuestion(question, answer) {
             const normalizedLabel = normalizeString(label);
             const normalizedValue = normalizeString(value);
 
-            if (label === radioAnswer ||
-                value === radioAnswer ||
-                radio.id === radioAnswer ||
-                label.toLowerCase() === radioAnswer.toLowerCase() ||
-                value.toLowerCase() === radioAnswer.toLowerCase() ||
-                normalizedLabel === normalizedAnswer ||
-                normalizedLabel.toLowerCase() === normalizedAnswer.toLowerCase() ||
-                normalizedValue === normalizedAnswer ||
-                normalizedValue.toLowerCase() === normalizedAnswer.toLowerCase()) {
+            // 🔧 LEVEL 4: Use fuzzy similarity matching for carousel radio buttons
+            const labelSim = similarity(radioAnswer, label);
+            const valueSim = value ? similarity(radioAnswer, value) : 0;
+            const maxSim = Math.max(labelSim, valueSim);
+            const isMatch = maxSim > 0.8;
+
+            if (isMatch && maxSim < 1.0) {
+              console.log(`[LEVEL 4 MATCH] Carousel: "${label}" ↔ "${radioAnswer}" (sim=${maxSim.toFixed(2)})`);
+            } else if (!isMatch && maxSim > 0.5) {
+              console.log(`[LEVEL 4 NO MATCH] Carousel: "${label}" ↔ "${radioAnswer}" (sim=${maxSim.toFixed(2)})`);
+            }
+
+            if (isMatch) {
               matchedRadio = radio;
               console.log(`[CAROUSEL] Matched radio input: ${radio.id}`);
               break;
@@ -7799,18 +7801,18 @@ async function fillQuestion(question, answer) {
           }
 
           // ONLY check if this radio matches AND we haven't matched yet
-          // Try exact match first, then case-insensitive match, then normalized match, then cleaned label
-          const isMatch = label === radioAnswer ||
-                         value === radioAnswer ||
-                         radio.id === radioAnswer ||
-                         label.toLowerCase() === radioAnswer.toLowerCase() ||
-                         value.toLowerCase() === radioAnswer.toLowerCase() ||
-                         normalizedLabel === normalizedAnswer ||
-                         normalizedLabel.toLowerCase() === normalizedAnswer.toLowerCase() ||
-                         normalizedValue === normalizedAnswer ||
-                         normalizedValue.toLowerCase() === normalizedAnswer.toLowerCase() ||
-                         cleanedLabel === normalizedAnswer ||
-                         cleanedLabel.toLowerCase() === normalizedAnswer.toLowerCase();
+          // 🔧 LEVEL 4: Use fuzzy similarity matching for radio buttons
+          const labelSim = similarity(radioAnswer, label);
+          const valueSim = value ? similarity(radioAnswer, value) : 0;
+          const cleanedSim = cleanedLabel !== normalizedLabel ? similarity(radioAnswer, cleanedLabel) : 0;
+          const maxSim = Math.max(labelSim, valueSim, cleanedSim);
+          const isMatch = maxSim > 0.8;
+
+          if (isMatch && maxSim < 1.0) {
+            console.log(`[LEVEL 4 MATCH] Radio: "${label}" ↔ "${radioAnswer}" (sim=${maxSim.toFixed(2)})`);
+          } else if (!isMatch && maxSim > 0.5) {
+            console.log(`[LEVEL 4 NO MATCH] Radio: "${label}" ↔ "${radioAnswer}" (sim=${maxSim.toFixed(2)})`);
+          }
 
           if (!radioMatched && isMatch) {
             console.log(`✓ Matched radio: "${label}" (value: ${value})`);
@@ -8583,9 +8585,15 @@ async function fillQuestion(question, answer) {
           const labelText = label.textContent.trim();
           console.log(`Label option: text="${labelText}"`);
 
-          // Check if this label matches the answer
-          const isMatch = labelText === labelAnswer ||
-                         labelText.toLowerCase() === labelAnswer.toLowerCase();
+          // 🔧 LEVEL 4: Use fuzzy similarity matching for label-radio
+          const sim = similarity(labelAnswer, labelText);
+          const isMatch = sim > 0.8;
+
+          if (isMatch && sim < 1.0) {
+            console.log(`[LEVEL 4 MATCH] Label-radio: "${labelText}" ↔ "${labelAnswer}" (sim=${sim.toFixed(2)})`);
+          } else if (!isMatch && sim > 0.5) {
+            console.log(`[LEVEL 4 NO MATCH] Label-radio: "${labelText}" ↔ "${labelAnswer}" (sim=${sim.toFixed(2)})`);
+          }
 
           if (isMatch && !labelMatched) {
             console.log(`✓ Matched label: "${labelText}"`);
@@ -8660,14 +8668,18 @@ async function fillQuestion(question, answer) {
                 el.querySelector('.option-text') ||
                 el.closest('.MuiListItemButton-root') ||
                 el;
-              const label = (labelEl?.innerText || labelEl?.textContent || '').trim().toLowerCase();
+              const label = (labelEl?.innerText || labelEl?.textContent || '').trim();
 
               answersArray.forEach(ans => {
-                const normalizedAns = (ans || '').trim().toLowerCase();
-                if (label && label.includes(normalizedAns)) {
+                // 🔧 LEVEL 4: Use fuzzy similarity matching for Material UI checkboxes
+                const sim = similarity(ans, label);
+                const match = sim > 0.8;
+
+                if (match) {
+                  console.log(`[LEVEL 4 MATCH] Material UI: "${label}" ↔ "${ans}" (sim=${sim.toFixed(2)})`);
                   el.click();
                   muiMatchCount++;
-                  console.log(`[FILL] ✅ Clicked Material UI checkbox for "${normalizedAns}"`);
+                  console.log(`[FILL] ✅ Clicked Material UI checkbox for "${ans}"`);
 
                   // Record self-healing success
                   if (window.selfHeal) {
@@ -8677,6 +8689,8 @@ async function fillQuestion(question, answer) {
                       selectors: ['.MuiListItemButton-root', '.MuiCheckbox-root', '[role="checkbox"]']
                     });
                   }
+                } else if (sim > 0.5) {
+                  console.log(`[LEVEL 4 NO MATCH] Material UI: "${label}" ↔ "${ans}" (sim=${sim.toFixed(2)})`);
                 }
               });
             } catch (err) {
@@ -8845,12 +8859,23 @@ async function fillQuestion(question, answer) {
 
           // Check if this checkbox should be checked
           // V5.1.1: Safe handling for Material UI checkboxes without value attribute
+          // 🔧 LEVEL 4: Use fuzzy similarity matching instead of strict comparisons
           const safeValue = value || '';
-          const shouldCheck = answersArray.some(ans =>
-            ans === label || ans === value || ans === id ||
-            String(ans).toLowerCase() === String(label).toLowerCase() ||
-            (safeValue && String(ans).toLowerCase() === safeValue.toLowerCase())
-          );
+          const shouldCheck = answersArray.some(ans => {
+            const labelSim = similarity(ans, label);
+            const valueSim = safeValue ? similarity(ans, value) : 0;
+            const maxSim = Math.max(labelSim, valueSim);
+            const match = maxSim > 0.8;
+
+            if (match) {
+              console.log(`[LEVEL 4 MATCH] "${label}" ↔ "${ans}" (sim=${maxSim.toFixed(2)})`);
+            } else if (maxSim > 0.5) {
+              // Log near-misses for debugging
+              console.log(`[LEVEL 4 NO MATCH] "${label}" ↔ "${ans}" (sim=${maxSim.toFixed(2)})`);
+            }
+
+            return match;
+          });
 
           console.log(`Checkbox "${id}" - label: "${label}", value: "${value}", shouldCheck: ${shouldCheck}`);
 
@@ -9080,15 +9105,20 @@ async function fillQuestion(question, answer) {
             const optText = opt.textContent.trim();
             const optValue = opt.value;
 
-            // 🔧 V1.9.58: Use Unicode normalization for matching (handles French chars, non-breaking spaces, etc.)
-            const optTextNorm = normalizeText(optText);
-            const optValueNorm = normalizeText(optValue);
-
-            // Check if this option matches any answer
+            // 🔧 LEVEL 4: Use fuzzy similarity matching for multi-select dropdowns
             const isMatch = answersArray.some(ans => {
-              const ansNorm = normalizeText(ans);
-              return optText === ans || optValue === ans ||
-                     optTextNorm === ansNorm || optValueNorm === ansNorm;
+              const textSim = similarity(ans, optText);
+              const valueSim = optValue ? similarity(ans, optValue) : 0;
+              const maxSim = Math.max(textSim, valueSim);
+              const match = maxSim > 0.8;
+
+              if (match && maxSim < 1.0) {
+                console.log(`[LEVEL 4 MATCH] Select: "${optText}" ↔ "${ans}" (sim=${maxSim.toFixed(2)})`);
+              } else if (!match && maxSim > 0.5) {
+                console.log(`[LEVEL 4 NO MATCH] Select: "${optText}" ↔ "${ans}" (sim=${maxSim.toFixed(2)})`);
+              }
+
+              return match;
             });
 
             if (isMatch) {
@@ -9129,13 +9159,19 @@ async function fillQuestion(question, answer) {
             const optText = opt.textContent.trim();
             const optValue = opt.value;
 
-            // 🔧 V1.9.58: Use Unicode normalization for matching (handles French chars, non-breaking spaces, etc.)
-            const optTextNorm = normalizeText(optText);
-            const optValueNorm = normalizeText(optValue);
-            const answerNorm = normalizeText(selectAnswer);
+            // 🔧 LEVEL 4: Use fuzzy similarity matching for single-select dropdowns
+            const textSim = similarity(selectAnswer, optText);
+            const valueSim = optValue ? similarity(selectAnswer, optValue) : 0;
+            const maxSim = Math.max(textSim, valueSim);
+            const isMatch = maxSim > 0.8;
 
-            if (!selectMatched && (optText === selectAnswer || optValue === selectAnswer ||
-                optTextNorm === answerNorm || optValueNorm === answerNorm)) {
+            if (isMatch && maxSim < 1.0) {
+              console.log(`[LEVEL 4 MATCH] Select: "${optText}" ↔ "${selectAnswer}" (sim=${maxSim.toFixed(2)})`);
+            } else if (!isMatch && maxSim > 0.5) {
+              console.log(`[LEVEL 4 NO MATCH] Select: "${optText}" ↔ "${selectAnswer}" (sim=${maxSim.toFixed(2)})`);
+            }
+
+            if (!selectMatched && isMatch) {
               console.log(`✓ Matched option: "${optText}" (value: ${optValue})`);
 
               // IPSOS Interactive fix (v1.9.24): Fire focus event BEFORE changing value

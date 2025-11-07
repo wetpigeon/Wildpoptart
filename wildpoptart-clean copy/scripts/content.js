@@ -1,10 +1,10 @@
 // Wildpoptart Content Script - Page Observer and Question Detector
 
-console.log('===== VERSION 5.1.2 - Material UI Checkbox Fallback + Self-Healing =====');
+console.log('===== VERSION 5.2.0 - Level 2: Question-Aware Self-Healing =====');
 console.log('📊 To export question database, type: exportDB()');
 console.log('🧬 To view self-healing stats, type: viewHealings()');
 console.log('🤖 AUTO-FILL MODE: The bot will automatically progress through surveys without button clicks');
-console.log('[v5.1.2] Added Material UI checkbox fallback layer with self-healing selector learning');
+console.log('[v5.2.0] Upgraded to Level 2 self-healing: question pattern fingerprinting with per-pattern learning');
 
 // State management
 let isActive = false;
@@ -428,12 +428,15 @@ function applyStructureMap(structure) {
             currentAnchor = dialog;
             facts = extractRuntimeFacts(dialog);
 
-            // V5.1.1: Record healing - dialog search succeeded
+            // V5.2.0: Record healing - dialog search succeeded (Level 2)
             if (facts.elements.length > 0 && window.selfHeal) {
               const platform = window.selfHeal.detectPlatform();
-              window.selfHeal.recordHealing(platform, 'dialogSearch', {
-                type: 'selector',
-                selectors: ['[role="dialog"]', '.MuiDialog-root', '.dialog-question']
+              const patternSig = window.selfHeal.computePatternSignature(dialog);
+              const questionType = window.selfHeal.detectQuestionType(dialog);
+              window.selfHeal.recordHealing(platform, patternSig, {
+                questionType,
+                selectors: ['[role="dialog"]', '.MuiDialog-root', '.dialog-question'],
+                success: true
               });
             }
           }
@@ -4895,12 +4898,15 @@ function findQuestionText(element) {
       if (cleanText.length > 0 && cleanText.length < 200 && !/^[a-z0-9._-]+$/i.test(cleanText) && !isOptionLabel) {
         console.log(`[FIND_QUESTION_TEXT] Found via heading: "${cleanText.substring(0, 50)}"`);
 
-        // V5.1.1: Record healing - zero-width space stripping worked
+        // V5.2.0: Record healing - zero-width space stripping worked (Level 2)
         if (text.length > 0 && cleanText.length > 0 && text !== cleanText && window.selfHeal) {
           const platform = window.selfHeal.detectPlatform();
-          window.selfHeal.recordHealing(platform, 'zeroWidthSpace', {
-            type: 'selector',
-            selectors: ['.MuiTypography-root', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'legend']
+          const patternSig = window.selfHeal.computePatternSignature(parent);
+          const questionType = window.selfHeal.detectQuestionType(parent);
+          window.selfHeal.recordHealing(platform, patternSig, {
+            questionType,
+            selectors: ['.MuiTypography-root', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'legend'],
+            success: true
           });
         }
 
@@ -8669,12 +8675,20 @@ async function fillQuestion(question, answer) {
                   muiMatchCount++;
                   console.log(`[FILL] ✅ Clicked Material UI checkbox for "${normalizedAns}"`);
 
-                  // Record self-healing success
+                  // V5.2.0: Record self-healing success (Level 2)
                   if (window.selfHeal) {
                     const platform = window.selfHeal.detectPlatform();
-                    window.selfHeal.recordHealing(platform, 'materialUI.checkbox', {
-                      type: 'selector',
-                      selectors: ['.MuiListItemButton-root', '.MuiCheckbox-root', '[role="checkbox"]']
+                    // Find question container for pattern signature
+                    const questionContainer = el.closest('[class*="question"]') ||
+                                             el.closest('fieldset') ||
+                                             el.closest('[role="group"]') ||
+                                             document.body;
+                    const patternSig = window.selfHeal.computePatternSignature(questionContainer);
+                    const questionType = window.selfHeal.detectQuestionType(questionContainer);
+                    window.selfHeal.recordHealing(platform, patternSig, {
+                      questionType,
+                      selectors: ['.MuiListItemButton-root', '.MuiCheckbox-root', '[role="checkbox"]'],
+                      success: true
                     });
                   }
                 }
@@ -9911,15 +9925,35 @@ window.viewDB = async function() {
   return database;
 };
 
-// V5.1.1: Expose self-healing debug functions
+// V5.2.0: Expose self-healing debug functions (Level 2: Question-aware)
 window.viewHealings = async function() {
   if (!window.selfHeal) {
     console.error('❌ Self-healing module not loaded');
     return;
   }
   const stats = await window.selfHeal.getHealStats();
-  console.log('🧬 Self-Healing Statistics:');
+  console.log('🧬 Self-Healing Statistics (Level 2: Question-Aware):');
+  console.log(`📊 Total learned patterns: ${stats.length}`);
   console.table(stats);
+
+  // Summary by platform
+  const platformSummary = {};
+  stats.forEach(entry => {
+    if (!platformSummary[entry.platform]) {
+      platformSummary[entry.platform] = {
+        patterns: 0,
+        totalSuccess: 0,
+        totalFailure: 0
+      };
+    }
+    platformSummary[entry.platform].patterns++;
+    platformSummary[entry.platform].totalSuccess += entry.successCount;
+    platformSummary[entry.platform].totalFailure += entry.failureCount;
+  });
+
+  console.log('\n📈 Platform Summary:');
+  console.table(platformSummary);
+
   return stats;
 };
 

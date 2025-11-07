@@ -1,10 +1,11 @@
 // Wildpoptart Content Script - Page Observer and Question Detector
 
-console.log('===== VERSION 5.1.2 - Material UI Checkbox Fallback + Self-Healing =====');
+console.log('===== VERSION 5.2.0 - Level 3 Context-Aware Self-Healing =====');
 console.log('📊 To export question database, type: exportDB()');
 console.log('🧬 To view self-healing stats, type: viewHealings()');
+console.log('📈 To view in-session healing stats, type: viewSessionStats()');
 console.log('🤖 AUTO-FILL MODE: The bot will automatically progress through surveys without button clicks');
-console.log('[v5.1.2] Added Material UI checkbox fallback layer with self-healing selector learning');
+console.log('[v5.2.0] Upgraded to Level 3: Context-aware healing with question type awareness');
 
 // State management
 let isActive = false;
@@ -25,6 +26,10 @@ let failureLog = []; // Track fill failures for debugging
 
 // V5.1.2: Self-healing learned selectors (populated during detection)
 let learnedDialogSelectors = [];
+
+// V5.2.0: Survey phase tracking for context-aware healing
+let surveyPhase = 'detection'; // Phases: 'detection', 'filling', 'submitting'
+let currentContext = null; // Current context for adaptive learning
 
 // Question database tracking
 let currentSurveySession = {
@@ -441,13 +446,15 @@ function applyStructureMap(structure) {
             currentAnchor = dialog;
             facts = extractRuntimeFacts(dialog);
 
-            // V5.1.1: Record healing - dialog search succeeded
+            // V5.2.0: Record healing - dialog search succeeded with context
             if (facts.elements.length > 0 && window.selfHeal) {
               const platform = window.selfHeal.detectPlatform();
+              const questionType = window.selfHeal.detectQuestionType(dialog) || intendedType || 'unknown';
+              const context = window.selfHeal.captureContext(platform, questionType, surveyPhase, dialog);
               window.selfHeal.recordHealing(platform, 'dialogSearch', {
                 type: 'selector',
                 selectors: ['[role="dialog"]', '.MuiDialog-root', '.dialog-question']
-              });
+              }, context);
             }
           }
         }
@@ -1529,17 +1536,24 @@ async function _detectQuestionsInternal() {
   // V1.9.61: Track detected question texts to identify duplicates (for dialog detection)
   const detectedQuestionTexts = new Set();
 
-  // V5.1.1: Self-healing - detect platform for adaptive learning
+  // V5.2.0: Self-healing - detect platform and capture context for adaptive learning
   const platform = window.selfHeal?.detectPlatform() || 'unknown';
   const detectionStartTime = performance.now();
+
+  // Set phase for context tracking
+  surveyPhase = 'detection';
 
   console.log('[DETECTION] Starting fresh question detection...');
   console.log(`[HEAL] Platform detected: ${platform}`);
 
-  // V5.1.2: Apply learned heals before detection
+  // V5.2.0: Capture context for context-aware healing
   let learnedEnv = {};
   if (window.selfHeal) {
-    learnedEnv = await window.selfHeal.applyHeals(platform, {});
+    // Capture initial context (question type unknown at this point)
+    currentContext = window.selfHeal.captureContext(platform, 'unknown', surveyPhase);
+
+    // Apply context-aware heals
+    learnedEnv = await window.selfHeal.applyHeals(platform, {}, currentContext);
 
     // Store learned selectors in global variable for use by other functions
     learnedDialogSelectors = learnedEnv.candidateSelectors || [];
@@ -3405,11 +3419,19 @@ async function _detectQuestionsInternal() {
   // V5.1.0: Log cost counters
   console.log(`[COST] hint=${costCounters.llm_hint_calls} repair=${costCounters.llm_repair_calls}`);
 
-  // V5.1.1: Self-healing - learn detection timing
+  // V5.2.0: Self-healing - learn detection timing with context
   if (window.selfHeal && detectedQuestions.length > 0) {
     const detectionTime = performance.now() - detectionStartTime;
     if (detectionTime > 100) { // Only learn if detection took significant time
-      window.selfHeal.learnDelay(platform, Math.round(detectionTime));
+      // Update context with detected question type if available
+      if (detectedQuestions.length > 0 && detectedQuestions[0].question_type) {
+        currentContext = window.selfHeal.captureContext(
+          platform,
+          detectedQuestions[0].question_type,
+          surveyPhase
+        );
+      }
+      window.selfHeal.learnDelay(platform, Math.round(detectionTime), currentContext);
     }
   }
 
@@ -4923,13 +4945,15 @@ function findQuestionText(element) {
       if (cleanText.length > 0 && cleanText.length < 200 && !/^[a-z0-9._-]+$/i.test(cleanText) && !isOptionLabel) {
         console.log(`[FIND_QUESTION_TEXT] Found via heading: "${cleanText.substring(0, 50)}"`);
 
-        // V5.1.1: Record healing - zero-width space stripping worked
+        // V5.2.0: Record healing - zero-width space stripping worked with context
         if (text.length > 0 && cleanText.length > 0 && text !== cleanText && window.selfHeal) {
           const platform = window.selfHeal.detectPlatform();
+          const questionType = window.selfHeal.detectQuestionType(heading) || 'unknown';
+          const context = window.selfHeal.captureContext(platform, questionType, surveyPhase, heading);
           window.selfHeal.recordHealing(platform, 'zeroWidthSpace', {
             type: 'selector',
             selectors: ['.MuiTypography-root', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'legend']
-          });
+          }, context);
         }
 
         return cleanText;
@@ -8697,13 +8721,14 @@ async function fillQuestion(question, answer) {
                   muiMatchCount++;
                   console.log(`[FILL] ✅ Clicked Material UI checkbox for "${normalizedAns}"`);
 
-                  // Record self-healing success
+                  // V5.2.0: Record self-healing success with context
                   if (window.selfHeal) {
                     const platform = window.selfHeal.detectPlatform();
+                    const context = window.selfHeal.captureContext(platform, 'checkbox', 'filling', el);
                     window.selfHeal.recordHealing(platform, 'materialUI.checkbox', {
                       type: 'selector',
                       selectors: ['.MuiListItemButton-root', '.MuiCheckbox-root', '[role="checkbox"]']
-                    });
+                    }, context);
                   }
                 }
               });
@@ -9939,16 +9964,66 @@ window.viewDB = async function() {
   return database;
 };
 
-// V5.1.1: Expose self-healing debug functions
+// V5.2.0: Expose self-healing debug functions with Level 3 enhancements
 window.viewHealings = async function() {
   if (!window.selfHeal) {
     console.error('❌ Self-healing module not loaded');
     return;
   }
   const stats = await window.selfHeal.getHealStats();
-  console.log('🧬 Self-Healing Statistics:');
-  console.table(stats);
+  console.log('🧬 Self-Healing Statistics (Level 3 - Context-Aware):');
+  console.log('');
+
+  // Display each platform with enhanced details
+  Object.keys(stats).forEach(platform => {
+    const platformStats = stats[platform];
+    console.log(`\n📍 Platform: ${platform.toUpperCase()}`);
+    console.log(`   Total Heals: ${platformStats.totalHeals}`);
+    console.log(`   Success Rate: ${platformStats.avgSuccessRate}`);
+    console.log(`   Learned Delay: ${platformStats.delay}ms`);
+
+    console.log(`\n   Issues Detected:`);
+    console.table(platformStats.issues);
+
+    console.log(`\n   Question Types:`);
+    console.table(platformStats.questionTypes);
+
+    if (platformStats.topHeals.length > 0) {
+      console.log(`\n   Top Performing Heals:`);
+      console.table(platformStats.topHeals);
+    }
+  });
+
   return stats;
+};
+
+window.viewSessionStats = function() {
+  if (!window.selfHeal) {
+    console.error('❌ Self-healing module not loaded');
+    return;
+  }
+  const sessionStats = window.selfHeal.getSessionStats();
+  console.log('📈 In-Session Healing Performance:');
+
+  if (Object.keys(sessionStats).length === 0) {
+    console.log('No heals applied yet in this session.');
+    return sessionStats;
+  }
+
+  const formattedStats = Object.keys(sessionStats).map(key => {
+    const stats = sessionStats[key];
+    const total = stats.success + stats.failure;
+    const rate = total > 0 ? (stats.success / total * 100).toFixed(0) + '%' : 'N/A';
+    return {
+      'Platform:Issue': key,
+      'Success': stats.success,
+      'Failure': stats.failure,
+      'Success Rate': rate
+    };
+  });
+
+  console.table(formattedStats);
+  return sessionStats;
 };
 
 window.clearHealings = async function() {
@@ -9957,6 +10032,6 @@ window.clearHealings = async function() {
     return;
   }
   await window.selfHeal.clearHealDB();
-  console.log('🧬 All healing policies cleared');
+  console.log('🧬 All healing policies cleared (v2.0 context-aware data)');
 };
 

@@ -1153,13 +1153,20 @@ function hasSignificantOverlap(str1, str2) {
 }
 
 // 🔧 V1.9.58: Normalize text for Unicode-safe matching (handles French special chars, non-breaking spaces, etc.)
+// 🔧 V5.1.3: Enhanced to handle curly quotes, em-dashes, and all Unicode punctuation variants
 function normalizeText(text) {
   if (!text) return '';
 
   return text
     // Convert to string and trim
     .toString().trim()
-    // Replace all types of spaces with regular space
+    // Replace curly/smart double quotes with straight quotes
+    .replace(/[""«»„‟]/g, '"')
+    // Replace curly/smart single quotes and apostrophes with straight apostrophes
+    .replace(/[''‚‛]/g, "'")
+    // Replace various dashes (em-dash, en-dash, minus sign) with hyphen
+    .replace(/[–—−]/g, '-')
+    // Replace all types of spaces with regular space (non-breaking, thin, etc.)
     .replace(/[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]/g, ' ')
     // Normalize multiple spaces to single space
     .replace(/\s+/g, ' ')
@@ -1167,6 +1174,8 @@ function normalizeText(text) {
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
     // Normalize composed characters (e.g., é becomes e + combining accent, then back to é)
     .normalize('NFC')
+    // Trim again after replacements
+    .trim()
     // Convert to lowercase for case-insensitive comparison
     .toLowerCase();
 }
@@ -7458,9 +7467,42 @@ async function fillQuestion(question, answer) {
         }
       }
 
-      // If no exact match, try partial match
+      // If no exact match, try normalized match
       if (!matched) {
-        console.log(`[DIV-SURVEY] No exact match, trying partial match for: "${selectedAnswer}"`);
+        console.log(`[DIV-SURVEY] No exact match, trying normalized match for: "${selectedAnswer}"`);
+        const ansNorm = normalizeText(selectedAnswer);
+
+        for (const opt of options) {
+          const optLabelNorm = normalizeText(opt.label);
+          const optValueNorm = normalizeText(opt.value);
+
+          if (optLabelNorm === ansNorm || optValueNorm === ansNorm) {
+            console.log(`[NORMALIZED_MATCH] Div-based option "${opt.label}" matched answer "${selectedAnswer}" after normalization`);
+            console.log(`[DIV-SURVEY] ✓ Normalized match - Clicking option: "${opt.label}"`);
+            const optElement = opt.element;
+            if (optElement) {
+              // For Askia surveys, also update the hidden input
+              if (question.isAskia && question.hiddenInput) {
+                const value = opt.value || opt.label;
+                question.hiddenInput.value = value;
+                question.hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
+                console.log(`[DIV-SURVEY] ✓ Updated hidden input ${question.hiddenInput.id} = "${value}"`);
+              }
+
+              optElement.click();
+              optElement.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+              matched = true;
+              matchedCount++;
+              await sleep(200);
+              break;
+            }
+          }
+        }
+      }
+
+      // If still no match, try partial match
+      if (!matched) {
+        console.log(`[DIV-SURVEY] No normalized match, trying partial match for: "${selectedAnswer}"`);
         for (const opt of options) {
           const optLower = opt.label.toLowerCase();
           const ansLower = selectedAnswer.toLowerCase();
@@ -7534,9 +7576,34 @@ async function fillQuestion(question, answer) {
         }
       }
 
-      // If no exact match, try partial match
+      // If no exact match, try normalized match
       if (!matched) {
-        console.log(`[QUEST] No exact match, trying partial match for: "${selectedAnswer}"`);
+        console.log(`[QUEST] No exact match, trying normalized match for: "${selectedAnswer}"`);
+        const ansNorm = normalizeText(selectedAnswer);
+
+        for (const opt of options) {
+          const optLabelNorm = normalizeText(opt.label);
+          const optValueNorm = normalizeText(opt.value);
+
+          if (optLabelNorm === ansNorm || optValueNorm === ansNorm) {
+            console.log(`[NORMALIZED_MATCH] Quest option "${opt.label}" matched answer "${selectedAnswer}" after normalization`);
+            console.log(`[QUEST] ✓ Normalized match - Clicking option: "${opt.label}"`);
+            const optElement = opt.element;
+            if (optElement) {
+              optElement.click();
+              optElement.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+              matched = true;
+              matchedCount++;
+              await sleep(200);
+              break;
+            }
+          }
+        }
+      }
+
+      // If still no match, try partial match
+      if (!matched) {
+        console.log(`[QUEST] No normalized match, trying partial match for: "${selectedAnswer}"`);
         for (const opt of options) {
           const optLower = opt.label.toLowerCase();
           const ansLower = selectedAnswer.toLowerCase();
@@ -7886,27 +7953,30 @@ async function fillQuestion(question, answer) {
 
           // Find which radio button matches the answer
           let matchedRadio = null;
-          const normalizeString = (str) => str.trim()
-            .replace(/\s+/g, ' ')
-            .replace(/[\u2018\u2019]/g, "'")  // Replace smart single quotes with '
-            .replace(/[\u201C\u201D]/g, '"'); // Replace smart double quotes with "
-          const normalizedAnswer = normalizeString(radioAnswer);
+          const normalizedAnswer = normalizeText(radioAnswer);
 
           for (const radio of radioElements) {
             const label = getOptionLabel(radio);
             const value = radio.value;
-            const normalizedLabel = normalizeString(label);
-            const normalizedValue = normalizeString(value);
+            const normalizedLabel = normalizeText(label);
+            const normalizedValue = normalizeText(value);
 
-            if (label === radioAnswer ||
-                value === radioAnswer ||
-                radio.id === radioAnswer ||
-                label.toLowerCase() === radioAnswer.toLowerCase() ||
-                value.toLowerCase() === radioAnswer.toLowerCase() ||
-                normalizedLabel === normalizedAnswer ||
-                normalizedLabel.toLowerCase() === normalizedAnswer.toLowerCase() ||
-                normalizedValue === normalizedAnswer ||
-                normalizedValue.toLowerCase() === normalizedAnswer.toLowerCase()) {
+            // Try exact match first
+            let isMatch = false;
+            if (label === radioAnswer || value === radioAnswer || radio.id === radioAnswer) {
+              isMatch = true;
+            }
+            // Try case-insensitive
+            else if (label.toLowerCase() === radioAnswer.toLowerCase() || value.toLowerCase() === radioAnswer.toLowerCase()) {
+              isMatch = true;
+            }
+            // Try normalized (handles Unicode variants)
+            else if (normalizedLabel === normalizedAnswer || normalizedValue === normalizedAnswer) {
+              isMatch = true;
+              console.log(`[NORMALIZED_MATCH] Carousel radio "${label}" matched answer "${radioAnswer}" after normalization`);
+            }
+
+            if (isMatch) {
               matchedRadio = radio;
               console.log(`[CAROUSEL] Matched radio input: ${radio.id}`);
               break;
@@ -7967,23 +8037,17 @@ async function fillQuestion(question, answer) {
           // Uncheck all first
           radio.checked = false;
 
-          // 🔧 FIX: Normalize strings to handle whitespace/Unicode/quote differences
-          // Replace all whitespace (spaces, tabs, newlines, non-breaking spaces) with single space
-          // Replace smart quotes (curly quotes) with regular quotes
-          const normalizeString = (str) => {
-            // V1.9.33: Handle object labels by extracting text property
-            let text = str;
-            if (typeof str === 'object' && str !== null && str.text) {
-              text = str.text;
-            }
-            return String(text).trim()
-              .replace(/\s+/g, ' ')
-              .replace(/[\u2018\u2019]/g, "'")  // Replace ' and ' (smart single quotes) with '
-              .replace(/[\u201C\u201D]/g, '"'); // Replace " and " (smart double quotes) with "
-          };
-          const normalizedLabel = normalizeString(label);
-          const normalizedAnswer = normalizeString(radioAnswer);
-          const normalizedValue = normalizeString(value);
+          // 🔧 V5.1.3: Use normalizeText() for comprehensive Unicode handling
+          // Handles curly quotes, em-dashes, non-breaking spaces, and all Unicode variants
+          // V1.9.33: Handle object labels by extracting text property
+          let labelText = label;
+          if (typeof label === 'object' && label !== null && label.text) {
+            labelText = label.text;
+          }
+
+          const normalizedLabel = normalizeText(labelText);
+          const normalizedAnswer = normalizeText(radioAnswer);
+          const normalizedValue = normalizeText(value);
 
           // 🔧 ANGULAR.JS FIX: Handle duplicate text in labels (e.g., "Male Male" -> "Male")
           // If label is just the same word repeated, use single instance
@@ -8031,20 +8095,29 @@ async function fillQuestion(question, answer) {
 
           // ONLY check if this radio matches AND we haven't matched yet
           // Try exact match first, then case-insensitive match, then normalized match, then cleaned label
-          const isMatch = label === radioAnswer ||
-                         value === radioAnswer ||
-                         radio.id === radioAnswer ||
-                         label.toLowerCase() === radioAnswer.toLowerCase() ||
-                         value.toLowerCase() === radioAnswer.toLowerCase() ||
-                         normalizedLabel === normalizedAnswer ||
-                         normalizedLabel.toLowerCase() === normalizedAnswer.toLowerCase() ||
-                         normalizedValue === normalizedAnswer ||
-                         normalizedValue.toLowerCase() === normalizedAnswer.toLowerCase() ||
-                         cleanedLabel === normalizedAnswer ||
-                         cleanedLabel.toLowerCase() === normalizedAnswer.toLowerCase();
+          let isMatch = false;
+          let matchType = '';
+
+          // Try exact matches first
+          if (label === radioAnswer || value === radioAnswer || radio.id === radioAnswer) {
+            isMatch = true;
+            matchType = 'exact';
+          }
+          // Try case-insensitive matches
+          else if (label.toLowerCase() === radioAnswer.toLowerCase() || value.toLowerCase() === radioAnswer.toLowerCase()) {
+            isMatch = true;
+            matchType = 'case-insensitive';
+          }
+          // Try normalized matches (handles Unicode variants)
+          else if (normalizedLabel === normalizedAnswer || normalizedValue === normalizedAnswer ||
+                   cleanedLabel === normalizedAnswer || cleanedLabel.toLowerCase() === normalizedAnswer.toLowerCase()) {
+            isMatch = true;
+            matchType = 'normalized';
+            console.log(`[NORMALIZED_MATCH] Radio "${label}" matched answer "${radioAnswer}" after normalization`);
+          }
 
           if (!radioMatched && isMatch) {
-            console.log(`✓ Matched radio: "${label}" (value: ${value})`);
+            console.log(`✓ Matched radio: "${label}" (value: ${value}) [${matchType}]`);
 
             // 🔧 CHECK FOR ANGULAR.JS: Detect Angular.js forms by checking for unevaluated attributes
             // Angular forms often have value="op.OptionId" or similar placeholders, and use ng-click on parent div
@@ -8891,14 +8964,21 @@ async function fillQuestion(question, answer) {
                 el.querySelector('.option-text') ||
                 el.closest('.MuiListItemButton-root') ||
                 el;
-              const label = (labelEl?.innerText || labelEl?.textContent || '').trim().toLowerCase();
+              const labelRaw = (labelEl?.innerText || labelEl?.textContent || '').trim();
+              const labelNorm = normalizeText(labelRaw);
 
               answersArray.forEach(ans => {
-                const normalizedAns = (ans || '').trim().toLowerCase();
-                if (label && label.includes(normalizedAns)) {
+                const ansNorm = normalizeText(ans);
+                // Try normalized match (includes case-insensitive)
+                if (labelNorm && labelNorm.includes(ansNorm)) {
+                  // Log if it's a normalized match
+                  if (labelRaw.toLowerCase() !== ans.toLowerCase()) {
+                    console.log(`[NORMALIZED_MATCH] Material UI checkbox "${labelRaw}" matched answer "${ans}" after normalization`);
+                  }
+
                   el.click();
                   muiMatchCount++;
-                  console.log(`[FILL] ✅ Clicked Material UI checkbox for "${normalizedAns}"`);
+                  console.log(`[FILL] ✅ Clicked Material UI checkbox for "${ans}"`);
 
                   // Record self-healing success
                   if (window.selfHeal) {
@@ -9075,13 +9155,34 @@ async function fillQuestion(question, answer) {
           }
 
           // Check if this checkbox should be checked
-          // V5.1.1: Safe handling for Material UI checkboxes without value attribute
+          // V5.1.3: Use normalizeText() for Unicode-safe matching (handles curly quotes, em-dashes, etc.)
           const safeValue = value || '';
-          const shouldCheck = answersArray.some(ans =>
-            ans === label || ans === value || ans === id ||
-            String(ans).toLowerCase() === String(label).toLowerCase() ||
-            (safeValue && String(ans).toLowerCase() === safeValue.toLowerCase())
+
+          // First try exact match
+          let shouldCheck = answersArray.some(ans =>
+            ans === label || ans === value || ans === id
           );
+
+          // If no exact match, try normalized matching
+          let matchedAnswer = null;
+          if (!shouldCheck) {
+            const labelNorm = normalizeText(label);
+            const valueNorm = normalizeText(safeValue);
+
+            shouldCheck = answersArray.some(ans => {
+              const ansNorm = normalizeText(ans);
+              const matches = ansNorm === labelNorm || ansNorm === valueNorm;
+              if (matches) {
+                matchedAnswer = ans;
+                return true;
+              }
+              return false;
+            });
+
+            if (shouldCheck && matchedAnswer) {
+              console.log(`[NORMALIZED_MATCH] Checkbox "${label}" matched answer "${matchedAnswer}" after normalization`);
+            }
+          }
 
           console.log(`Checkbox "${id}" - label: "${label}", value: "${value}", shouldCheck: ${shouldCheck}`);
 
@@ -9316,13 +9417,29 @@ async function fillQuestion(question, answer) {
             const optValueNorm = normalizeText(optValue);
 
             // Check if this option matches any answer
+            let matchedAnswer = null;
+            let matchType = 'exact';
             const isMatch = answersArray.some(ans => {
+              // Try exact match first
+              if (optText === ans || optValue === ans) {
+                matchedAnswer = ans;
+                matchType = 'exact';
+                return true;
+              }
+              // Try normalized match
               const ansNorm = normalizeText(ans);
-              return optText === ans || optValue === ans ||
-                     optTextNorm === ansNorm || optValueNorm === ansNorm;
+              if (optTextNorm === ansNorm || optValueNorm === ansNorm) {
+                matchedAnswer = ans;
+                matchType = 'normalized';
+                return true;
+              }
+              return false;
             });
 
             if (isMatch) {
+              if (matchType === 'normalized') {
+                console.log(`[NORMALIZED_MATCH] Select option "${optText}" matched answer "${matchedAnswer}" after normalization`);
+              }
               console.log(`✓ Selecting option: "${optText}" (value: ${optValue})`);
               opt.selected = true;
               matchCount++;
@@ -9365,9 +9482,23 @@ async function fillQuestion(question, answer) {
             const optValueNorm = normalizeText(optValue);
             const answerNorm = normalizeText(selectAnswer);
 
-            if (!selectMatched && (optText === selectAnswer || optValue === selectAnswer ||
-                optTextNorm === answerNorm || optValueNorm === answerNorm)) {
-              console.log(`✓ Matched option: "${optText}" (value: ${optValue})`);
+            // Try exact match first, then normalized
+            let isMatch = false;
+            let matchType = 'exact';
+
+            if (!selectMatched) {
+              if (optText === selectAnswer || optValue === selectAnswer) {
+                isMatch = true;
+                matchType = 'exact';
+              } else if (optTextNorm === answerNorm || optValueNorm === answerNorm) {
+                isMatch = true;
+                matchType = 'normalized';
+                console.log(`[NORMALIZED_MATCH] Select option "${optText}" matched answer "${selectAnswer}" after normalization`);
+              }
+            }
+
+            if (isMatch) {
+              console.log(`✓ Matched option: "${optText}" (value: ${optValue}) [${matchType}]`);
 
               // IPSOS Interactive fix (v1.9.24): Fire focus event BEFORE changing value
               element.dispatchEvent(new Event('focus', { bubbles: true }));

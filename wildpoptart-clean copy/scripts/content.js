@@ -1,14 +1,13 @@
 // Wildpoptart Content Script - Page Observer and Question Detector
 
-console.log('===== VERSION 5.1.4 - Comprehensive Normalization Audit =====');
+console.log('===== VERSION 5.1.5 - Fix Curly Quote Normalization =====');
 console.log('📊 To export question database, type: exportDB()');
 console.log('🧬 To view self-healing stats, type: viewHealings()');
 console.log('🤖 AUTO-FILL MODE: The bot will automatically progress through surveys without button clicks');
-console.log('[v5.1.4] Audited ALL matching logic to ensure consistent normalizeText() usage');
-console.log('[v5.1.4] Fixed checkbox, radio, select, and Material UI matching to use normalizeText()');
-console.log('[v5.1.4] Removed redundant .toLowerCase() calls after normalization');
-console.log('[v5.1.4] Added [NORMALIZED_MATCH] logging for all normalized comparisons');
-console.log('[v5.1.4] Ensures curly quotes and Unicode chars match correctly across all input types');
+console.log('[v5.1.5] 🔧 CRITICAL FIX: Added curly quote conversion to normalizeText()');
+console.log('[v5.1.5] Converts " " → " and ' ' → \' before comparison');
+console.log('[v5.1.5] Added [CURLY_QUOTES_DETECTED] and [CURLY_QUOTES_NORMALIZED] logging');
+console.log('[v5.1.5] Fixes checkboxes with curly-quoted labels not being selected in Decipher');
 
 // State management
 let isActive = false;
@@ -1156,13 +1155,28 @@ function hasSignificantOverlap(str1, str2) {
   return overlapRatio > 0.5;
 }
 
-// 🔧 V1.9.58: Normalize text for Unicode-safe matching (handles French special chars, non-breaking spaces, etc.)
+// 🔧 V5.1.5: Helper to detect curly quotes in text
+function hasCurlyQuotes(text) {
+  if (!text) return false;
+  return /[\u2018\u2019\u201C\u201D]/.test(text);
+}
+
+// 🔧 V5.1.5: Enhanced normalize text for Unicode-safe matching
+// Handles curly quotes, French special chars, non-breaking spaces, etc.
 function normalizeText(text) {
   if (!text) return '';
 
-  return text
-    // Convert to string and trim
-    .toString().trim()
+  const original = text.toString().trim();
+
+  // V5.1.5: Detect and log curly quotes for debugging
+  if (hasCurlyQuotes(original)) {
+    console.log(`[CURLY_QUOTES_DETECTED] Original: "${original}"`);
+  }
+
+  const normalized = original
+    // V5.1.5: Convert curly quotes to straight quotes (critical for Decipher surveys)
+    .replace(/[\u2018\u2019]/g, "'")  // Convert ' and ' (smart single quotes) to '
+    .replace(/[\u201C\u201D]/g, '"')  // Convert " and " (smart double quotes) to "
     // Replace all types of spaces with regular space
     .replace(/[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]/g, ' ')
     // Normalize multiple spaces to single space
@@ -1173,6 +1187,12 @@ function normalizeText(text) {
     .normalize('NFC')
     // Convert to lowercase for case-insensitive comparison
     .toLowerCase();
+
+  if (hasCurlyQuotes(original)) {
+    console.log(`[CURLY_QUOTES_NORMALIZED] Result: "${normalized}"`);
+  }
+
+  return normalized;
 }
 
 // Detect Quest Mindshare custom div-based questions

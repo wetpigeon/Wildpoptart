@@ -1,6 +1,6 @@
 /**
  * selfHealPolicy.js
- * v2.0.0 — Level 3: Context-Aware Self-Healing with Question Awareness
+ * v2.0.1 — Level 3: Context-Aware Self-Healing with Question Awareness (Production-Ready)
  *
  * Purpose:
  * - Detects recurring DOM or LLM extraction issues.
@@ -8,11 +8,12 @@
  * - Adapts based on platform, DOM structure, question type, and survey phase.
  * - Tracks success/failure rates for adaptive learning.
  *
- * Upgrade from v1.0.0 (Platform-Aware) to v2.0.0 (Context-Aware):
+ * Upgrade from v1.0.0 (Platform-Aware) to v2.0.1 (Context-Aware):
  * - Level 2.5: Question type awareness
  * - Level 3: Full context matching (platform + DOM fingerprint + question type + phase)
  * - Adaptive learning with success/failure tracking
  * - Real-time heuristic optimization
+ * - v2.0.1: Runtime guards, throttled fingerprinting, selector deduplication
  *
  * Integration: Chrome Extension Manifest V3 compatible
  */
@@ -130,13 +131,24 @@ async function saveHealDB() {
   });
 }
 
+// V5.2.1: Cache for throttled fingerprint computation
+let _lastFP = { t: 0, val: 'unknown' };
+
 /**
  * Compute a lightweight DOM fingerprint for context matching.
+ * Throttled to 300ms and includes pathname for stability.
  * Captures key structural elements without full DOM serialization.
  * @returns {string} Hash representing DOM structure
  */
 function computeDOMFingerprint() {
+  const now = Date.now();
+  // Throttle: return cached value if called within 300ms
+  if (now - _lastFP.t < 300) return _lastFP.val;
+
   const features = [];
+
+  // Include pathname segment for stability across page changes
+  features.push(`path:${location.pathname.split('/').slice(0, 3).join('/')}`);
 
   // Count key element types
   features.push(`dialogs:${document.querySelectorAll('[role="dialog"], .MuiDialog-root, .modal').length}`);
@@ -162,7 +174,9 @@ function computeDOMFingerprint() {
     hash = ((hash << 5) + hash) + fingerprint.charCodeAt(i);
   }
 
-  return (hash >>> 0).toString(36); // Convert to base36 string
+  const val = (hash >>> 0).toString(36);
+  _lastFP = { t: now, val }; // Cache result
+  return val;
 }
 
 /**
@@ -467,6 +481,11 @@ async function applyHeals(platform, env = {}, context = null) {
       }
     }
   });
+
+  // V5.2.1: Dedup selectors to prevent ballooning across multiple runs
+  if (env.candidateSelectors?.length) {
+    env.candidateSelectors = [...new Set(env.candidateSelectors)];
+  }
 
   if (addedSelectors.length) {
     console.log(`[HEAL] Applied ${addedSelectors.length} selectors from ${appliedHeals.length} heals:`, appliedHeals);

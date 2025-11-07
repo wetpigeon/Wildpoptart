@@ -1,11 +1,11 @@
 // Wildpoptart Content Script - Page Observer and Question Detector
 
-console.log('===== VERSION 5.2.0 - Level 3 Context-Aware Self-Healing =====');
+console.log('===== VERSION 5.2.1 - Level 3 Context-Aware Self-Healing (Production-Ready) =====');
 console.log('📊 To export question database, type: exportDB()');
 console.log('🧬 To view self-healing stats, type: viewHealings()');
 console.log('📈 To view in-session healing stats, type: viewSessionStats()');
 console.log('🤖 AUTO-FILL MODE: The bot will automatically progress through surveys without button clicks');
-console.log('[v5.2.0] Upgraded to Level 3: Context-aware healing with question type awareness');
+console.log('[v5.2.1] Level 3 with runtime guards, performance optimizations, and adaptive learning');
 
 // State management
 let isActive = false;
@@ -30,6 +30,9 @@ let learnedDialogSelectors = [];
 // V5.2.0: Survey phase tracking for context-aware healing
 let surveyPhase = 'detection'; // Phases: 'detection', 'filling', 'submitting'
 let currentContext = null; // Current context for adaptive learning
+
+// V5.2.1: Debug flag for self-healing logs (set to false to silence in production)
+const DEBUG_HEAL = true;
 
 // Question database tracking
 let currentSurveySession = {
@@ -425,9 +428,14 @@ function applyStructureMap(structure) {
       let facts = extractRuntimeFacts(anchorEl);
       let currentAnchor = anchorEl;
 
-      // V5.1.0: If no elements found, try broadening scope immediately
+      // V5.2.1: If no elements found, try broadening scope immediately
       if (facts.elements.length === 0 && (intendedType === 'radio' || intendedType === 'checkbox')) {
         console.log(`[LLM-APPLY] No elements found at anchor, broadening scope...`);
+
+        // V5.2.1: Record failure before trying broader scopes
+        if (window.selfHeal && currentContext) {
+          window.selfHeal.recordHealFailure(platform, 'dialogSearch', currentContext);
+        }
 
         // Strategy 1: Climb up parent tree
         const broaderEl = broadenScope(anchorEl);
@@ -446,7 +454,7 @@ function applyStructureMap(structure) {
             currentAnchor = dialog;
             facts = extractRuntimeFacts(dialog);
 
-            // V5.2.0: Record healing - dialog search succeeded with context
+            // V5.2.1: Record healing - dialog search succeeded with context
             if (facts.elements.length > 0 && window.selfHeal) {
               const platform = window.selfHeal.detectPlatform();
               const questionType = window.selfHeal.detectQuestionType(dialog) || intendedType || 'unknown';
@@ -455,6 +463,8 @@ function applyStructureMap(structure) {
                 type: 'selector',
                 selectors: ['[role="dialog"]', '.MuiDialog-root', '.dialog-question']
               }, context);
+              // V5.2.1: Record success when healed selector yields elements
+              window.selfHeal.recordHealSuccess(platform, 'dialogSearch', context);
             }
           }
         }
@@ -1546,7 +1556,7 @@ async function _detectQuestionsInternal() {
   console.log('[DETECTION] Starting fresh question detection...');
   console.log(`[HEAL] Platform detected: ${platform}`);
 
-  // V5.2.0: Capture context for context-aware healing
+  // V5.2.1: Capture context for context-aware healing
   let learnedEnv = {};
   if (window.selfHeal) {
     // Capture initial context (question type unknown at this point)
@@ -1558,11 +1568,14 @@ async function _detectQuestionsInternal() {
     // Store learned selectors in global variable for use by other functions
     learnedDialogSelectors = learnedEnv.candidateSelectors || [];
 
-    // Apply learned delay for DOM stabilization
-    if (learnedEnv.delay && learnedEnv.delay > 0) {
-      console.log(`[HEAL] Waiting ${learnedEnv.delay}ms for DOM stabilization (learned delay)`);
-      await new Promise(resolve => setTimeout(resolve, learnedEnv.delay));
+    // V5.2.1: Guard delay before awaiting (prevent NaN/undefined)
+    const delayMs = Number(learnedEnv?.delay) || 0;
+    if (delayMs > 0) {
+      if (DEBUG_HEAL) console.log(`[HEAL] Waiting ${delayMs}ms for DOM stabilization (context-matched)`);
+      await new Promise(r => setTimeout(r, delayMs));
     }
+  } else if (DEBUG_HEAL) {
+    console.warn('[HEAL] selfHealPolicy not loaded');
   }
 
   // FIRST: Check for Quest Mindshare custom div-based questions
@@ -8721,7 +8734,7 @@ async function fillQuestion(question, answer) {
                   muiMatchCount++;
                   console.log(`[FILL] ✅ Clicked Material UI checkbox for "${normalizedAns}"`);
 
-                  // V5.2.0: Record self-healing success with context
+                  // V5.2.1: Record self-healing success with context
                   if (window.selfHeal) {
                     const platform = window.selfHeal.detectPlatform();
                     const context = window.selfHeal.captureContext(platform, 'checkbox', 'filling', el);
@@ -8729,6 +8742,8 @@ async function fillQuestion(question, answer) {
                       type: 'selector',
                       selectors: ['.MuiListItemButton-root', '.MuiCheckbox-root', '[role="checkbox"]']
                     }, context);
+                    // V5.2.1: Record success after healed Material UI checkbox click works
+                    window.selfHeal.recordHealSuccess(platform, 'materialUI.checkbox', context);
                   }
                 }
               });

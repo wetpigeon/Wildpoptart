@@ -9917,30 +9917,111 @@ window.viewHealings = async function() {
     console.error('❌ Self-healing module not loaded');
     return;
   }
-  const stats = await window.selfHeal.getHealStats();
-  console.log('🧬 Self-Healing Statistics (Level 3: Context-Aware):');
-  console.table(stats);
 
-  // Show detailed context features for each platform
+  console.log('═══════════════════════════════════════════════════════════════');
+  console.log('🧬 LEVEL 3: CONTEXT-AWARE SELF-HEALING STATISTICS (v3.0.0)');
+  console.log('═══════════════════════════════════════════════════════════════\n');
+
+  // Get basic stats
+  const stats = await window.selfHeal.getHealStats();
+
+  // Get detailed heal data
   const allHeals = await chrome.storage.local.get('selfHealPolicies_v1');
   const healData = allHeals.selfHealPolicies_v1 || {};
 
+  // Build comprehensive table data
+  const tableData = [];
   Object.keys(healData).forEach(platform => {
-    console.log(`\n📍 Platform: ${platform}`);
-    healData[platform].forEach((heal, idx) => {
-      console.log(`  ${idx + 1}. ${heal.issue}`);
-      if (heal.contextFeatures) {
-        const ctx = heal.contextFeatures;
-        console.log(`     Context: depth=${ctx.depth}, siblings=${ctx.siblingCount}, slider=${ctx.hasSlider}, dropdown=${ctx.hasDropdown}, checkbox=${ctx.hasCheckbox}`);
-        console.log(`     Parent classes:`, ctx.parentClasses.slice(0, 5).join(', '));
-      } else {
-        console.log(`     Context: Not recorded (Level 2 heal)`);
-      }
-      console.log(`     Fix:`, heal.fix);
+    const heals = healData[platform];
+    const platformStats = stats[platform] || {};
+
+    heals.forEach((heal, idx) => {
+      const row = {
+        platform,
+        issue: heal.issue,
+        fixType: heal.fix.type || 'unknown',
+        hasContext: heal.contextFeatures ? '✅' : '❌',
+        depth: heal.contextFeatures?.depth || 'N/A',
+        siblings: heal.contextFeatures?.siblingCount || 'N/A',
+        slider: heal.contextFeatures?.hasSlider ? '✅' : '❌',
+        dropdown: heal.contextFeatures?.hasDropdown ? '✅' : '❌',
+        checkbox: heal.contextFeatures?.hasCheckbox ? '✅' : '❌',
+        predictedDelay: heal.contextFeatures ?
+          window.selfHeal.predictDelay(heal.contextFeatures) + 'ms' : 'N/A',
+        timestamp: new Date(heal.timestamp).toLocaleString()
+      };
+      tableData.push(row);
     });
   });
 
-  return stats;
+  console.log('📊 Healing Records by Platform & Issue:');
+  console.table(tableData);
+
+  // Platform summary
+  console.log('\n📍 Platform Summary:');
+  const platformSummary = Object.keys(stats).map(platform => ({
+    platform,
+    totalHeals: stats[platform].totalHeals,
+    delayMs: stats[platform].delay || 'None',
+    level3Heals: healData[platform]?.filter(h => h.contextFeatures).length || 0,
+    level2Heals: healData[platform]?.filter(h => !h.contextFeatures).length || 0
+  }));
+  console.table(platformSummary);
+
+  // Context Analysis
+  console.log('\n🔍 Level 3 Context Analysis:');
+  Object.keys(healData).forEach(platform => {
+    const heals = healData[platform];
+    const contextHeals = heals.filter(h => h.contextFeatures);
+
+    if (contextHeals.length > 0) {
+      console.log(`\n  Platform: ${platform}`);
+      console.log(`  ├─ Total heals with context: ${contextHeals.length}`);
+
+      // Calculate average context metrics
+      const avgDepth = (contextHeals.reduce((sum, h) => sum + h.contextFeatures.depth, 0) / contextHeals.length).toFixed(1);
+      const avgSiblings = (contextHeals.reduce((sum, h) => sum + h.contextFeatures.siblingCount, 0) / contextHeals.length).toFixed(1);
+      const sliderCount = contextHeals.filter(h => h.contextFeatures.hasSlider).length;
+      const dropdownCount = contextHeals.filter(h => h.contextFeatures.hasDropdown).length;
+      const checkboxCount = contextHeals.filter(h => h.contextFeatures.hasCheckbox).length;
+
+      console.log(`  ├─ Average DOM depth: ${avgDepth}`);
+      console.log(`  ├─ Average siblings: ${avgSiblings}`);
+      console.log(`  ├─ Heals with sliders: ${sliderCount}`);
+      console.log(`  ├─ Heals with dropdowns: ${dropdownCount}`);
+      console.log(`  └─ Heals with checkboxes: ${checkboxCount}`);
+
+      // Similarity analysis - compare each heal to others
+      if (contextHeals.length > 1) {
+        console.log(`\n  🎯 Pattern Similarity Analysis:`);
+        contextHeals.forEach((heal, idx) => {
+          const similar = window.selfHeal.findSimilarPatterns(
+            heal.contextFeatures,
+            contextHeals.filter((_, i) => i !== idx) // Compare to other heals
+          );
+
+          if (similar.length > 0) {
+            const avgScore = (similar.reduce((sum, s) => sum + s.score, 0) / similar.length).toFixed(1);
+            console.log(`  ├─ ${heal.issue}: ${similar.length} similar patterns (avg score: ${avgScore})`);
+          }
+        });
+      }
+
+      // Delay predictions
+      console.log(`\n  ⏱️  Adaptive Delay Predictions:`);
+      contextHeals.forEach(heal => {
+        const predicted = window.selfHeal.predictDelay(heal.contextFeatures);
+        console.log(`  ├─ ${heal.issue}: ${predicted}ms (depth=${heal.contextFeatures.depth})`);
+      });
+    }
+  });
+
+  console.log('\n═══════════════════════════════════════════════════════════════');
+  console.log('💡 TIP: Use findSimilarPatterns() to test pattern matching');
+  console.log('💡 TIP: Use predictDelay() to test adaptive timing');
+  console.log('═══════════════════════════════════════════════════════════════\n');
+
+  return { stats, healData, tableData };
 };
 
 window.clearHealings = async function() {

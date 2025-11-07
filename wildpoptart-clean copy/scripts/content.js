@@ -2577,12 +2577,53 @@ async function _detectQuestionsInternal() {
       });
 
       // Build clean column options
-      const cleanOptions = Array.from(columnLabels.keys()).map(label => ({
+      let cleanOptions = Array.from(columnLabels.keys()).map(label => ({
         label: label,
         value: label
       }));
 
       console.log(`[MATRIX] Extracted ${cleanOptions.length} unique columns:`, cleanOptions.map(c => c.label));
+
+      // 🔧 LEVEL 5.1.2 SELF-HEALING: Fallback for missing column labels
+      // If no columns were extracted (no data-column-label or <th> elements), extract from input labels
+      if (cleanOptions.length === 0) {
+        console.log(`[MATRIX] ⚠️ No column labels found via aria-labelledby. Falling back to getOptionLabel() extraction...`);
+
+        // Extract unique labels from all inputs across all rows
+        const uniqueLabels = [];
+        const seenLabels = new Set();
+
+        // Get labels from first row (should have all columns)
+        if (questions.length > 0 && questions[0].elements) {
+          questions[0].elements.forEach(input => {
+            const label = getOptionLabel(input);
+            if (label && !seenLabels.has(label)) {
+              uniqueLabels.push(label);
+              seenLabels.add(label);
+            }
+          });
+        }
+
+        // Build clean options from extracted labels
+        cleanOptions = uniqueLabels.map(label => ({
+          label: label,
+          value: label
+        }));
+
+        console.log(`[MATRIX] ✓ Fallback extracted ${cleanOptions.length} columns from input labels:`, cleanOptions.map(c => c.label));
+
+        // Record this healing pattern in the database
+        if (window.selfHeal && window.selfHeal.recordHealing && cleanOptions.length > 0) {
+          const platform = window.selfHeal.detectPlatform();
+          window.selfHeal.recordHealing(platform, 'missingColumnLabels', {
+            type: 'positionalMap',
+            extractionMethod: 'getOptionLabel',
+            columnCount: cleanOptions.length,
+            columns: cleanOptions.map(c => c.label),
+            timestamp: Date.now()
+          }).catch(err => console.warn('[MATRIX] Failed to record healing:', err));
+        }
+      }
 
       // Extract row labels (situations) by parsing the row header elements
       const rows = questions.map(q => {
@@ -6846,13 +6887,30 @@ async function fillQuestion(question, answer) {
         console.log(`[MATRIX] Row has ${elements.length} checkboxes`);
 
         let checkedCount = 0;
-        for (const checkbox of elements) {
+        for (let checkboxIndex = 0; checkboxIndex < elements.length; checkboxIndex++) {
+          const checkbox = elements[checkboxIndex];
           const label = getOptionLabel(checkbox);
-          console.log(`[MATRIX] Checking checkbox ID="${checkbox.id}" label="${label}"`);
+          console.log(`[MATRIX] Checking checkbox [${checkboxIndex}] ID="${checkbox.id}" label="${label}"`);
 
           // Check if this checkbox should be checked
           const shouldCheck = answersToCheck.some(ans => {
-            const answerLower = ans.toLowerCase();
+            const answerLower = ans.toLowerCase().trim();
+
+            // 🔧 LEVEL 5.1.2 POSITIONAL MAPPING: Handle "Option A/B/C/D" responses
+            // Map Option A → index 0, Option B → index 1, etc.
+            const optionMatch = answerLower.match(/^option\s+([a-z])$/i);
+            if (optionMatch) {
+              const optionLetter = optionMatch[1].toLowerCase();
+              const optionIndex = optionLetter.charCodeAt(0) - 'a'.charCodeAt(0);
+              console.log(`[MATRIX] Detected positional option: "${ans}" → index ${optionIndex}`);
+
+              if (checkboxIndex === optionIndex) {
+                console.log(`[MATRIX] ✓ Positional match! Checkbox index ${checkboxIndex} matches "${ans}"`);
+                return true;
+              }
+            }
+
+            // Standard label matching (fallback)
             return question.columns.some(col => {
               const colLabelLower = col.label.toLowerCase();
               const labelLower = label.toLowerCase();
@@ -6892,18 +6950,34 @@ async function fillQuestion(question, answer) {
         console.log(`[MATRIX] Row has ${radioElements.length} radio buttons`);
 
         let filled = false;
-        for (const radio of radioElements) {
+        for (let radioIndex = 0; radioIndex < radioElements.length; radioIndex++) {
+          const radio = radioElements[radioIndex];
           const label = getOptionLabel(radio);
-          console.log(`[MATRIX] Checking radio ID="${radio.id}" label="${label}" against answer="${rowAnswer.answer}"`);
+          console.log(`[MATRIX] Checking radio [${radioIndex}] ID="${radio.id}" label="${label}" against answer="${rowAnswer.answer}"`);
 
           // FIXED: Compare radio button label directly against Claude's answer
           // Don't loop through all columns - that returns true if ANY column matches!
           const answerLower = rowAnswer.answer.toLowerCase().trim();
           const labelLower = label.toLowerCase().trim();
 
-          // Use exact match only to avoid false positives
-          // (e.g., "do not influence" should not match "influence")
-          const matchesAnswer = answerLower === labelLower;
+          // 🔧 LEVEL 5.1.2 POSITIONAL MAPPING: Handle "Option A/B/C/D" responses
+          // Map Option A → index 0, Option B → index 1, etc.
+          let matchesAnswer = false;
+          const optionMatch = answerLower.match(/^option\s+([a-z])$/i);
+          if (optionMatch) {
+            const optionLetter = optionMatch[1].toLowerCase();
+            const optionIndex = optionLetter.charCodeAt(0) - 'a'.charCodeAt(0);
+            console.log(`[MATRIX] Detected positional option: "${rowAnswer.answer}" → index ${optionIndex}`);
+
+            if (radioIndex === optionIndex) {
+              console.log(`[MATRIX] ✓ Positional match! Radio index ${radioIndex} matches "${rowAnswer.answer}"`);
+              matchesAnswer = true;
+            }
+          } else {
+            // Use exact match only to avoid false positives
+            // (e.g., "do not influence" should not match "influence")
+            matchesAnswer = answerLower === labelLower;
+          }
 
           if (matchesAnswer) {
             console.log(`[MATRIX] Match found! Radio label="${label}" matches answer="${rowAnswer.answer}"`);

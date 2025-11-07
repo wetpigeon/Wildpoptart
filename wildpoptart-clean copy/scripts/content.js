@@ -6087,6 +6087,7 @@ async function fillSurveyWithAnswers(response) {
   }
 
   // VALIDATE MOST/LEAST QUESTIONS: Ensure same option isn't selected for both
+  // Check both separate questions and matrix format
   const mostLeastQuestions = answers.filter(a =>
     a.question_text && (a.question_text.toLowerCase().includes('most likely') ||
                        a.question_text.toLowerCase().includes('least likely'))
@@ -6105,6 +6106,32 @@ async function fillSurveyWithAnswers(response) {
       return;
     } else if (mostQ && leastQ) {
       console.log('✓ Most/Least validation passed - different answers selected');
+    }
+  }
+
+  // 🔧 VALIDATE MOST/LEAST MATRIX FORMAT: Check row_answers for mutual exclusivity
+  const matrixAnswers = answers.filter(a => a.question_type === 'matrix' && a.row_answers && Array.isArray(a.row_answers));
+  for (const matrixAnswer of matrixAnswers) {
+    const mostRow = matrixAnswer.row_answers.find(r => r.row_id && r.row_id.endsWith('_most'));
+    const leastRow = matrixAnswer.row_answers.find(r => r.row_id && r.row_id.endsWith('_least'));
+
+    if (mostRow && leastRow) {
+      // Normalize answers for comparison (handle both string and array formats)
+      const mostAnswer = Array.isArray(mostRow.answer) ? mostRow.answer[0] : mostRow.answer;
+      const leastAnswer = Array.isArray(leastRow.answer) ? leastRow.answer[0] : leastRow.answer;
+
+      if (mostAnswer === leastAnswer) {
+        console.error('❌ VALIDATION FAILED: Same attribute selected for Most and Least in matrix!');
+        console.error(`Matrix question: "${matrixAnswer.question_id}"`);
+        console.error(`Most row (${mostRow.row_id}): "${mostAnswer}"`);
+        console.error(`Least row (${leastRow.row_id}): "${leastAnswer}"`);
+        showNotification('ERROR: Most/Least matrix validation failed - same attribute selected for both rows. Stopping.', 'error');
+        hideLoading();
+        return;
+      } else {
+        console.log('✓ Most/Least matrix validation passed - different attributes selected');
+        console.log(`  Most: "${mostAnswer}", Least: "${leastAnswer}"`);
+      }
     }
   }
 

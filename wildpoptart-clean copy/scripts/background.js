@@ -2414,18 +2414,47 @@ function buildUserMessage(surveyData) {
 
     // Special handling for matrix questions (Likert scale grids)
     if (q.question_type === 'matrix' && q.rows && q.columns) {
-      message += `   - ⚠️ MATRIX/GRID QUESTION: This is ONE question with ${q.rows.length} rows - return ONE answer object with row_answers array!\n`;
-      message += `   - 🚨 DO NOT create ${q.rows.length} separate answer objects! Use the row_answers format shown in the example below!\n`;
-      message += `   - Rows to answer:\n`;
-      q.rows.forEach((row, i) => {
-        message += `     ${i + 1}. "${row.label}" (row_id: "${row.question_id}")\n`;
-      });
-      message += `   - Column options: ${q.columns.map(c => c.label).join(' | ')}\n`;
-      message += `   - 🚨 CRITICAL: For each row answer, you MUST use the EXACT column label listed above - DO NOT PARAPHRASE!\n`;
-      message += `   - ❌ WRONG: Creating your own wording like "Neither influence nor decide"\n`;
-      message += `   - ✅ CORRECT: Copy the EXACT text from column options above (e.g., "Do not influence purchase decisions")\n`;
-      message += `   - Example: If column options are "Boys - 0 | Boys - 1 | Boys - 2", answer must be "Boys - 1" (NOT just "1"!)\n`;
-      message += `   - IMPORTANT: Vary your answers across rows based on realistic behavior!\n`;
+      // 🔧 SPECIAL: Detect Most/Least dual-column matrices
+      const hasMostLeastPattern = q.rows.some(r => r.question_id.endsWith('_most')) &&
+                                   q.rows.some(r => r.question_id.endsWith('_least'));
+
+      if (hasMostLeastPattern) {
+        message += `   - ⚠️ MOST/LEAST MATRIX: This is a dual-column question asking for both "most" and "least" preferences!\n`;
+        message += `   - 🚨 CRITICAL RULES:\n`;
+        message += `     1. Derive a shared attribute list from the column labels (ignore numeric headers like 2/4/6/8)\n`;
+        message += `     2. Output answers by ATTRIBUTE LABEL, not by numbers\n`;
+        message += `     3. NEVER select the same attribute for both "Most" and "Least" rows!\n`;
+        message += `     4. If a conflict would occur, keep "Most" unchanged and change "Least" to a different attribute\n`;
+        message += `   - Rows to answer:\n`;
+        q.rows.forEach((row, i) => {
+          const rowType = row.question_id.endsWith('_most') ? '[MOST]' : row.question_id.endsWith('_least') ? '[LEAST]' : '';
+          message += `     ${i + 1}. ${rowType} "${row.label}" (row_id: "${row.question_id}")\n`;
+        });
+        message += `   - Attribute options: ${q.columns.map(c => c.label).join(' | ')}\n`;
+        message += `   - Example format:\n`;
+        message += `     {\n`;
+        message += `       "question_id": "${q.question_id}",\n`;
+        message += `       "question_type": "matrix",\n`;
+        message += `       "row_answers": [\n`;
+        message += `         {"row_id": "${q.rows.find(r => r.question_id.endsWith('_most'))?.question_id}", "answer": "${q.columns[0]?.label}"},\n`;
+        message += `         {"row_id": "${q.rows.find(r => r.question_id.endsWith('_least'))?.question_id}", "answer": "${q.columns[1]?.label}"}\n`;
+        message += `       ],\n`;
+        message += `       "notes": "Used shared attribute list; enforced mutual exclusivity."\n`;
+        message += `     }\n`;
+      } else {
+        message += `   - ⚠️ MATRIX/GRID QUESTION: This is ONE question with ${q.rows.length} rows - return ONE answer object with row_answers array!\n`;
+        message += `   - 🚨 DO NOT create ${q.rows.length} separate answer objects! Use the row_answers format shown in the example below!\n`;
+        message += `   - Rows to answer:\n`;
+        q.rows.forEach((row, i) => {
+          message += `     ${i + 1}. "${row.label}" (row_id: "${row.question_id}")\n`;
+        });
+        message += `   - Column options: ${q.columns.map(c => c.label).join(' | ')}\n`;
+        message += `   - 🚨 CRITICAL: For each row answer, you MUST use the EXACT column label listed above - DO NOT PARAPHRASE!\n`;
+        message += `   - ❌ WRONG: Creating your own wording like "Neither influence nor decide"\n`;
+        message += `   - ✅ CORRECT: Copy the EXACT text from column options above (e.g., "Do not influence purchase decisions")\n`;
+        message += `   - Example: If column options are "Boys - 0 | Boys - 1 | Boys - 2", answer must be "Boys - 1" (NOT just "1"!)\n`;
+        message += `   - IMPORTANT: Vary your answers across rows based on realistic behavior!\n`;
+      }
     }
     // V1.9.96: Special handling for Confirmit slider questions (bipolar scales)
     else if (q.question_type === 'confirmit_slider' && q.sliders && q.sliders.length > 0) {

@@ -5879,13 +5879,36 @@ async function fillSurveyWithAnswers(response) {
 
   console.log('Claude response:', response);
 
-  const { persona, answers} = response;
+  // ✅ DEFENSIVE: Extract answers with fallback to empty array
+  const { persona, answers = [] } = response;
 
-  console.log('Full answers array:', JSON.stringify(answers, null, 2));
+  // Additional safety check in case answers was explicitly set to non-array value
+  const safeAnswers = Array.isArray(answers) ? answers : [];
+
+  if (safeAnswers.length === 0) {
+    console.warn('[FILL] ⚠️ No answers in response - this may indicate a matrix/grid question parsing issue');
+
+    // Check if we have matrix questions
+    const hasMatrixQuestion = detectedQuestions.some(q =>
+      q.question_type === 'matrix' ||
+      q.question_type === 'checkbox_matrix' ||
+      q.question_type === 'number_matrix' ||
+      q.isMatrix
+    );
+
+    if (hasMatrixQuestion) {
+      console.warn('[FILL] 🔍 Matrix/grid question detected - model may need more context or better prompting');
+      showNotification('⚠️ No answers generated for matrix question. Please try again or fill manually.', 'warning');
+      hideLoading();
+      return;
+    }
+  }
+
+  console.log('Full answers array:', JSON.stringify(safeAnswers, null, 2));
 
   // Show what Claude answered for debugging
   let answersDebug = `Claude's Answers:\n`;
-  answers.forEach((a, idx) => {
+  safeAnswers.forEach((a, idx) => {
     let answerText;
     if (a.row_answers) {
       // Matrix question - show count of rows
@@ -5906,17 +5929,17 @@ async function fillSurveyWithAnswers(response) {
     lastSurveyUrl: window.location.href
   });
 
-  console.log(`Attempting to fill ${answers.length} answers`);
+  console.log(`Attempting to fill ${safeAnswers.length} answers`);
   console.log('Detected questions IDs:', detectedQuestions.map(q => q.question_id));
-  console.log('Answer IDs from Claude:', answers.map(a => a.question_id));
+  console.log('Answer IDs from Claude:', safeAnswers.map(a => a.question_id));
 
   // Log first answer as example
-  if (answers.length > 0) {
-    console.log('Example answer structure:', answers[0]);
+  if (safeAnswers.length > 0) {
+    console.log('Example answer structure:', safeAnswers[0]);
   }
 
   // VALIDATE MOST/LEAST QUESTIONS: Ensure same option isn't selected for both
-  const mostLeastQuestions = answers.filter(a =>
+  const mostLeastQuestions = safeAnswers.filter(a =>
     a.question_text && (a.question_text.toLowerCase().includes('most likely') ||
                        a.question_text.toLowerCase().includes('least likely'))
   );
@@ -5940,7 +5963,7 @@ async function fillSurveyWithAnswers(response) {
   let filledCount = 0;
 
   // Fill each answer
-  for (const answer of answers) {
+  for (const answer of safeAnswers) {
     // V1.9.63: Try exact match first, then check for merged question IDs
     let question = detectedQuestions.find(q => q.question_id === answer.question_id);
 
@@ -5977,7 +6000,7 @@ async function fillSurveyWithAnswers(response) {
     }
 
     // Add random delay between questions (but not after the last one)
-    const isLastQuestion = filledCount === answers.length;
+    const isLastQuestion = filledCount === safeAnswers.length;
     if (!isLastQuestion) {
       const delay = 3000 + Math.random() * 1000; // Random between 3000-4000ms
       console.log(`[DELAY] Waiting ${Math.round(delay)}ms before next question...`);
@@ -5985,7 +6008,7 @@ async function fillSurveyWithAnswers(response) {
     }
   }
 
-  console.log(`Successfully filled ${filledCount} out of ${answers.length} answers`);
+  console.log(`Successfully filled ${filledCount} out of ${safeAnswers.length} answers`);
 
   // Check if this was a Quest Mindshare survey (one question at a time)
   const isQuestMindshare = detectedQuestions.some(q => q.isQuestMindshare);

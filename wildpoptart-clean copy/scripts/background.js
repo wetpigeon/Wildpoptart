@@ -2866,6 +2866,41 @@ async function callClaudeAPI(apiKey, userMessage, questions = null, retryCount =
 
       console.log('[API] Parsed response with', parsedResponse.answers?.length, 'answers');
 
+      // ✅ CRITICAL FIX: Ensure answers array always exists to prevent forEach crashes
+      // This fixes the issue where matrix/grid questions might not return answers
+      if (!parsedResponse.answers) {
+        console.warn('[LEVEL5] ⚠️ Response missing answers array - creating empty array to prevent crash');
+
+        // Check if this is a matrix question by examining the questions sent
+        const hasMatrixQuestion = questions && questions.some(q =>
+          q.question_type === 'matrix' ||
+          q.question_type === 'checkbox_matrix' ||
+          q.question_type === 'number_matrix' ||
+          q.isMatrix
+        );
+
+        if (hasMatrixQuestion) {
+          console.warn('[LEVEL5] 🔍 Matrix question detected but no answers returned - model may need more context');
+        }
+
+        parsedResponse.answers = [];
+      }
+
+      // Ensure answers is an array (in case it was set to null or other non-array value)
+      if (!Array.isArray(parsedResponse.answers)) {
+        console.warn('[LEVEL5] ⚠️ Answers is not an array - converting to empty array');
+        parsedResponse.answers = [];
+      }
+
+      // For backward compatibility with v4-5 scripts, also add to fill property
+      if (!parsedResponse.fill) {
+        parsedResponse.fill = { answers: parsedResponse.answers };
+      } else if (!parsedResponse.fill.answers) {
+        parsedResponse.fill.answers = parsedResponse.answers;
+      }
+
+      console.log('[API] ✅ Response validated with', parsedResponse.answers.length, 'answers');
+
       return parsedResponse;
 
     } catch (fetchError) {

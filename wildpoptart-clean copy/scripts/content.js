@@ -23,6 +23,9 @@ let costCounters = {
 };
 let failureLog = []; // Track fill failures for debugging
 
+// V5.1.2: Self-healing learned selectors (populated during detection)
+let learnedDialogSelectors = [];
+
 // Question database tracking
 let currentSurveySession = {
   survey_id: null,
@@ -303,6 +306,16 @@ async function discoverStructureWithLLM(minimalHTML) {
 }
 
 /**
+ * V5.1.2: Build dialog selector string including learned selectors
+ * @returns {string} Comma-separated selector string
+ */
+function buildDialogSelector() {
+  const baseSelectors = ['[role="dialog"]', '.MuiDialog-root', '.dialog-question', '.modal', '[class*="dialog"]'];
+  const allSelectors = [...new Set([...baseSelectors, ...learnedDialogSelectors])]; // Deduplicate
+  return allSelectors.join(', ');
+}
+
+/**
  * Extract question text from element context (parents/siblings)
  * Strips invisible characters like zero-width spaces
  */
@@ -333,7 +346,7 @@ function extractQuestionTextFromContext(el) {
 
       // Still empty? Search in entire dialog container
       if (!text || text.replace(/[\u200B-\u200D\uFEFF]/g, '').trim().length < 3) {
-        const dialog = document.querySelector('[role="dialog"], .MuiDialog-root, .dialog-question, .modal');
+        const dialog = document.querySelector(buildDialogSelector());
         if (dialog) {
           const dialogHeading = dialog.querySelector('.MuiTypography-root, h1, h2, h3, h4, h5, h6, [role="heading"]');
           if (dialogHeading) {
@@ -422,7 +435,7 @@ function applyStructureMap(structure) {
         // Strategy 2: If still no elements, search entire dialog/modal
         if (facts.elements.length === 0) {
           console.log(`[LLM-APPLY] Still no elements, searching entire dialog...`);
-          const dialog = document.querySelector('[role="dialog"], .dialog-question, .MuiDialog-root, .modal, [class*="dialog"]');
+          const dialog = document.querySelector(buildDialogSelector());
           if (dialog) {
             console.log(`[LLM-APPLY] Found dialog container, re-extracting...`);
             currentAnchor = dialog;
@@ -1523,6 +1536,21 @@ async function _detectQuestionsInternal() {
   console.log('[DETECTION] Starting fresh question detection...');
   console.log(`[HEAL] Platform detected: ${platform}`);
 
+  // V5.1.2: Apply learned heals before detection
+  let learnedEnv = {};
+  if (window.selfHeal) {
+    learnedEnv = await window.selfHeal.applyHeals(platform, {});
+
+    // Store learned selectors in global variable for use by other functions
+    learnedDialogSelectors = learnedEnv.candidateSelectors || [];
+
+    // Apply learned delay for DOM stabilization
+    if (learnedEnv.delay && learnedEnv.delay > 0) {
+      console.log(`[HEAL] Waiting ${learnedEnv.delay}ms for DOM stabilization (learned delay)`);
+      await new Promise(resolve => setTimeout(resolve, learnedEnv.delay));
+    }
+  }
+
   // FIRST: Check for Quest Mindshare custom div-based questions
   const customQuestions = detectQuestMindshareQuestions();
   if (customQuestions.length > 0) {
@@ -1853,7 +1881,7 @@ async function _detectQuestionsInternal() {
       // V5.1.1: Skip Material UI checkboxes without name attribute
       // These are detected better by LLM fallback as a grouped question
       if (type === 'checkbox' && !input.name) {
-        const isInDialog = input.closest('[role="dialog"], .MuiDialog-root, .dialog-question');
+        const isInDialog = input.closest(buildDialogSelector());
         const hasGenericId = !input.id || input.id.startsWith('q_checkbox_');
         if (isInDialog && hasGenericId) {
           console.log(`[DETECTION] Skipping Material UI checkbox without name: ID="${input.id}" (will be detected by LLM as grouped question)`);

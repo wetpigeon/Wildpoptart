@@ -1177,6 +1177,9 @@ function normalizeText(text) {
     // V5.1.5: Convert curly quotes to straight quotes (critical for Decipher surveys)
     .replace(/[\u2018\u2019]/g, "'")  // Convert ' and ' (smart single quotes) to '
     .replace(/[\u201C\u201D]/g, '"')  // Convert " and " (smart double quotes) to "
+    // V5.1.5: Remove surrounding quotation marks (e.g., ""A Product of Mexico"" → A Product of Mexico)
+    .replace(/^"+|"+$/g, '')          // Remove leading/trailing straight quotes
+    .replace(/^'+|'+$/g, '')          // Remove leading/trailing straight single quotes
     // Replace all types of spaces with regular space
     .replace(/[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]/g, ' ')
     // Normalize multiple spaces to single space
@@ -1185,7 +1188,8 @@ function normalizeText(text) {
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
     // Normalize composed characters (e.g., é becomes e + combining accent, then back to é)
     .normalize('NFC')
-    // Convert to lowercase for case-insensitive comparison
+    // Trim any remaining whitespace and convert to lowercase
+    .trim()
     .toLowerCase();
 
   if (hasCurlyQuotes(original)) {

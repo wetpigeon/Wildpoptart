@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wildpoptart Survey Bot</title>
+  <link rel="stylesheet" href="styles/popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🍰 Wildpoptart</h1>
+      <p class="subtitle">AI Survey Assistant</p>
+    </header>
+
+    <main>
+      <!-- Status Section -->
+      <div class="section status-section">
+        <div class="status-indicator" id="statusIndicator">
+          <span class="status-dot" id="statusDot"></span>
+          <span class="status-text" id="statusText">Inactive</span>
+        </div>
+      </div>
+
+      <!-- API Key Configuration -->
+      <div class="section api-section">
+        <label for="apiKey">Claude API Key</label>
+        <div class="input-group">
+          <input
+            type="password"
+            id="apiKey"
+            placeholder="sk-ant-api03-..."
+            autocomplete="off"
+          />
+          <button id="toggleApiKey" class="btn-icon" title="Show/Hide">👁️</button>
+        </div>
+        <button id="saveApiKey" class="btn btn-primary">Save API Key</button>
+        <p class="help-text">
+          Get your API key from <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a>
+        </p>
+      </div>
+
+      <!-- Control Section -->
+      <div class="section control-section">
+        <button id="toggleExtension" class="btn btn-large">
+          <span id="toggleIcon">▶️</span>
+          <span id="toggleText">Activate</span>
+        </button>
+
+        <!-- Auto-Fill Toggle -->
+        <div class="checkbox-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoFill" />
+            <span>✨ AUTO-FILL (automatically fill every page)</span>
+          </label>
+        </div>
+
+        <button id="fillSurvey" class="btn btn-secondary" disabled>
+          Fill Current Survey (Manual)
+        </button>
+
+        <button id="resetPersona" class="btn btn-outline">
+          Reset Persona
+        </button>
+
+        <button id="exportDatabase" class="btn btn-outline">
+          📊 Export Database
+        </button>
+
+        <button id="debugSnapshot" class="btn btn-outline">
+          🐛 Debug Snapshot
+        </button>
+      </div>
+
+      <!-- Info Section -->
+      <div class="section info-section" id="infoSection" style="display: none;">
+        <h3>Survey Info</h3>
+        <div class="info-item">
+          <span class="label">Questions Detected:</span>
+          <span class="value" id="questionsCount">0</span>
+        </div>
+        <div class="info-item">
+          <span class="label">Current Persona:</span>
+          <span class="value" id="personaInfo">None</span>
+        </div>
+      </div>
+
+      <!-- Feedback Message -->
+      <div id="feedbackMessage" class="feedback-message"></div>
+    </main>
+
+    <footer>
+      <p class="version">v1.9.82</p>
+    </footer>
+  </div>
+
+  <script src="scripts/popup.js"></script>
+</body>
+</html>

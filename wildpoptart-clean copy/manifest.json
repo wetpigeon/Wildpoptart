@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Wildpoptart Survey Bot",
-  "version": "5.1.2",
-  "description": "AI-powered survey bot with self-correcting feedback loop",
+  "version": "5.1.5",
+  "description": "AI-powered survey bot with curly quote normalization",
   "permissions": [
     "activeTab",
     "storage",

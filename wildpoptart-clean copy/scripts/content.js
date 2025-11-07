@@ -4,8 +4,8 @@ console.log('===== VERSION 5.1.5 - Fix Curly Quote Normalization =====');
 console.log('📊 To export question database, type: exportDB()');
 console.log('🧬 To view self-healing stats, type: viewHealings()');
 console.log('🤖 AUTO-FILL MODE: The bot will automatically progress through surveys without button clicks');
-console.log('[v5.1.5] 🔧 CRITICAL FIX: Added curly quote conversion to normalizeText()');
-console.log('[v5.1.5] Converts " " → " and ' ' → \' before comparison');
+console.log('[v5.1.5] CRITICAL FIX: Added curly quote conversion to normalizeText()');
+console.log('[v5.1.5] Converts curly quotes to straight quotes before comparison');
 console.log('[v5.1.5] Added [CURLY_QUOTES_DETECTED] and [CURLY_QUOTES_NORMALIZED] logging');
 console.log('[v5.1.5] Fixes checkboxes with curly-quoted labels not being selected in Decipher');
 

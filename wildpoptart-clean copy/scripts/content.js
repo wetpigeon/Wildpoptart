@@ -2076,7 +2076,13 @@ async function _detectQuestionsInternal() {
     if (inputs.length > 0) {
       const questionData = extractGroupedQuestionData(inputs, name, detectedQuestionTexts);
       if (questionData) {
-        detectedQuestions.push(questionData);
+        // V3.0.0: Handle dual-column questions (returns array) or single question (returns object)
+        if (Array.isArray(questionData)) {
+          detectedQuestions.push(...questionData);
+          console.log(`[DETECTION] Added ${questionData.length} dual-column questions from group: ${name}`);
+        } else {
+          detectedQuestions.push(questionData);
+        }
       }
     }
   });
@@ -3772,6 +3778,193 @@ function extractGroupedQuestionData(inputs, name, detectedQuestionTexts = null) 
 
     // Track this question text for future duplicate detection
     detectedQuestionTexts.add(questionText);
+  }
+
+  // V3.0.0: DUAL-COLUMN MOST/LEAST DETECTION
+  // Detect "most/least" or "select one from each column" patterns
+  const questionTextLower = questionText.toLowerCase();
+  const isDualColumn = (
+    (questionTextLower.includes('most') && questionTextLower.includes('least')) ||
+    (questionTextLower.includes('most important') && questionTextLower.includes('least important')) ||
+    (questionTextLower.includes('most likely') && questionTextLower.includes('least likely')) ||
+    questionTextLower.includes('select one from each column') ||
+    questionTextLower.includes('one from each column') ||
+    (questionTextLower.includes('each column') && questionTextLower.includes('one'))
+  );
+
+  if (isDualColumn && type === 'radio' && inputs.length >= 4) {
+    console.log(`[DUAL-COLUMN] ✓ Detected most/least dual-column question: "${questionText.substring(0, 100)}"`);
+    console.log(`[DUAL-COLUMN] Total inputs: ${inputs.length}`);
+
+    // Get bounding rectangles and sort by horizontal position
+    const inputsWithPos = inputs.map(input => {
+      // Try to get position from input, or its label, or its parent
+      let rect = input.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        // Input might be hidden, try label
+        const label = input.id ? document.querySelector(`label[for="${input.id}"]`) : null;
+        if (label) {
+          rect = label.getBoundingClientRect();
+        } else if (input.parentElement) {
+          rect = input.parentElement.getBoundingClientRect();
+        }
+      }
+      return {
+        input,
+        left: rect.left,
+        right: rect.right,
+        width: rect.width
+      };
+    }).filter(item => item.width > 0); // Filter out invisible elements
+
+    if (inputsWithPos.length < 4) {
+      console.log(`[DUAL-COLUMN] ⚠️ Not enough visible inputs (${inputsWithPos.length}), falling back to single question`);
+      return questionData;
+    }
+
+    // Sort by horizontal position
+    inputsWithPos.sort((a, b) => a.left - b.left);
+
+    // Split into two groups (left half and right half)
+    const midIndex = Math.floor(inputsWithPos.length / 2);
+    const leftColumn = inputsWithPos.slice(0, midIndex);
+    const rightColumn = inputsWithPos.slice(midIndex);
+
+    console.log(`[DUAL-COLUMN] Split into ${leftColumn.length} left + ${rightColumn.length} right`);
+    console.log(`[DUAL-COLUMN] Left range: ${leftColumn[0].left.toFixed(0)} - ${leftColumn[leftColumn.length-1].right.toFixed(0)}px`);
+    console.log(`[DUAL-COLUMN] Right range: ${rightColumn[0].left.toFixed(0)} - ${rightColumn[rightColumn.length-1].right.toFixed(0)}px`);
+
+    // Determine which column is "most" and which is "least" based on question text
+    let mostColumn, leastColumn, mostKeyword, leastKeyword;
+
+    // Look for column headers in the DOM
+    const container = firstInput.closest('.question, [role="radiogroup"], [role="group"], [class*="question"]');
+    let leftHeader = '', rightHeader = '';
+
+    if (container) {
+      // Try to find column headers
+      const headers = container.querySelectorAll('th, [class*="header"], [class*="column"]');
+      const headerTexts = Array.from(headers).map(h => h.textContent.trim().toLowerCase());
+
+      for (const text of headerTexts) {
+        if (text.includes('most') && !leftHeader) leftHeader = text;
+        else if (text.includes('least') && !rightHeader) rightHeader = text;
+      }
+    }
+
+    // Determine column assignment based on headers or question text
+    if (leftHeader.includes('most') || questionTextLower.indexOf('most') < questionTextLower.indexOf('least')) {
+      mostColumn = leftColumn;
+      leastColumn = rightColumn;
+      mostKeyword = 'most';
+      leastKeyword = 'least';
+    } else {
+      mostColumn = rightColumn;
+      leastColumn = leftColumn;
+      mostKeyword = 'most';
+      leastKeyword = 'least';
+    }
+
+    // Extract what the "most/least" applies to from question text
+    let mostQualifier = 'most likely';
+    let leastQualifier = 'least likely';
+
+    if (questionTextLower.includes('most important')) {
+      mostQualifier = 'most important';
+      leastQualifier = 'least important';
+    } else if (questionTextLower.includes('most likely')) {
+      mostQualifier = 'most likely';
+      leastQualifier = 'least likely';
+    }
+
+    // Extract base question text (remove the dual-column instruction)
+    let baseQuestion = questionText
+      .replace(/select one from each column[.:]/i, '')
+      .replace(/one from each column[.:]/i, '')
+      .replace(/\(.*most.*least.*\)/i, '')
+      .trim();
+
+    // Create two separate question objects
+    const mostQuestion = {
+      question_id: `${questionId}_most`,
+      element: mostColumn[0].input,
+      elements: mostColumn.map(item => item.input),
+      question_text: `${baseQuestion} (${mostQualifier})`,
+      question_type: 'radio',
+      required: isRequired,
+      options: mostColumn.map(item => {
+        const optionLabel = getOptionLabel(item.input);
+        let labelText = optionLabel;
+        let imageUrl = null;
+        let hasImage = false;
+
+        if (typeof optionLabel === 'object' && optionLabel !== null && optionLabel.image) {
+          hasImage = true;
+          imageUrl = optionLabel.image;
+          labelText = optionLabel.text;
+        }
+
+        return {
+          label: labelText,
+          value: item.input.value || labelText,
+          id: item.input.id,
+          isNoneOfAbove: false,
+          image: imageUrl,
+          hasImage: hasImage
+        };
+      }),
+      isDualColumn: true,
+      dualColumnType: 'most',
+      dualColumnPair: `${questionId}_least`,
+      hasNoneOfAbove: false,
+      isCarousel: false,
+      hasImageOptions: options.some(opt => opt.hasImage),
+      current_answer: null
+    };
+
+    const leastQuestion = {
+      question_id: `${questionId}_least`,
+      element: leastColumn[0].input,
+      elements: leastColumn.map(item => item.input),
+      question_text: `${baseQuestion} (${leastQualifier})`,
+      question_type: 'radio',
+      required: isRequired,
+      options: leastColumn.map(item => {
+        const optionLabel = getOptionLabel(item.input);
+        let labelText = optionLabel;
+        let imageUrl = null;
+        let hasImage = false;
+
+        if (typeof optionLabel === 'object' && optionLabel !== null && optionLabel.image) {
+          hasImage = true;
+          imageUrl = optionLabel.image;
+          labelText = optionLabel.text;
+        }
+
+        return {
+          label: labelText,
+          value: item.input.value || labelText,
+          id: item.input.id,
+          isNoneOfAbove: false,
+          image: imageUrl,
+          hasImage: hasImage
+        };
+      }),
+      isDualColumn: true,
+      dualColumnType: 'least',
+      dualColumnPair: `${questionId}_most`,
+      hasNoneOfAbove: false,
+      isCarousel: false,
+      hasImageOptions: options.some(opt => opt.hasImage),
+      current_answer: null
+    };
+
+    console.log(`[DUAL-COLUMN] Created two questions:`);
+    console.log(`[DUAL-COLUMN]   Most: "${mostQuestion.question_text}" with ${mostQuestion.options.length} options`);
+    console.log(`[DUAL-COLUMN]   Least: "${leastQuestion.question_text}" with ${leastQuestion.options.length} options`);
+
+    // Return array of both questions
+    return [mostQuestion, leastQuestion];
   }
 
   return questionData;
@@ -9364,6 +9557,55 @@ async function fillQuestion(question, answer) {
 
   } catch (error) {
     console.error(`Error filling question ${question.question_id}:`, error);
+  }
+
+  // V3.0.0: For dual-column questions, check if paired question is also filled
+  if (question.isDualColumn && question.dualColumnPair) {
+    console.log(`[DUAL-COLUMN] Filled ${question.dualColumnType} question, checking for pair: ${question.dualColumnPair}`);
+
+    // Initialize tracking set if needed
+    window._dualColumnFilled = window._dualColumnFilled || new Set();
+
+    // Check if paired question was already filled
+    const pairFilled = window._dualColumnFilled.has(question.dualColumnPair);
+
+    if (!pairFilled) {
+      console.log(`[DUAL-COLUMN] Pair "${question.dualColumnPair}" not yet filled - will wait for both before marking complete`);
+
+      // Save this question to database but don't add to answeredQuestionIds yet
+      const storageKey = 'wildpoptart_question_db';
+      const result = await chrome.storage.local.get([storageKey]);
+      const database = result[storageKey] || [];
+
+      const questionRecord = {
+        timestamp: Date.now(),
+        question_text: question.question_text,
+        question_type: question.question_type,
+        options: question.options ? question.options.map(o => o.label || o.value) : [],
+        answer_given: Array.isArray(answer.answer) ? answer.answer : [answer.answer],
+        url: window.location.href
+      };
+
+      database.push(questionRecord);
+      const trimmedDb = database.slice(-500);
+      await chrome.storage.local.set({ [storageKey]: trimmedDb });
+
+      // Mark this question as filled (but not answered yet)
+      window._dualColumnFilled.add(question.question_id);
+
+      return; // Don't call saveQuestionToDatabase (already saved above)
+    } else {
+      console.log(`[DUAL-COLUMN] ✓ Both columns filled! Marking both as complete`);
+
+      // Mark both as answered
+      answeredQuestionIds.add(question.question_id);
+      answeredQuestionIds.add(question.dualColumnPair);
+      console.log(`[DUAL-COLUMN] Added both "${question.question_id}" and "${question.dualColumnPair}" to answered set`);
+
+      // Clear from temporary tracking
+      window._dualColumnFilled.delete(question.question_id);
+      window._dualColumnFilled.delete(question.dualColumnPair);
+    }
   }
 
   // Save question to database (after successful fill)

@@ -178,6 +178,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Update status UI
   function updateStatus(active, showMessage = false) {
     console.log('[POPUP] updateStatus called, active:', active, 'showMessage:', showMessage);
+    console.log('[POPUP] fillSurveyBtn exists?', !!fillSurveyBtn);
 
     if (active) {
       statusDot.classList.add('active');
@@ -185,7 +186,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       toggleIcon.textContent = '⏸️';
       toggleText.textContent = 'Deactivate';
       toggleExtensionBtn.classList.add('active');
-      fillSurveyBtn.disabled = false;
+
+      // CRITICAL: Enable the fill button
+      if (fillSurveyBtn) {
+        fillSurveyBtn.disabled = false;
+        fillSurveyBtn.style.display = 'block';
+        fillSurveyBtn.style.opacity = '1';
+        console.log('[POPUP] ✓ Fill button: disabled=false, display=block, opacity=1');
+      } else {
+        console.error('[POPUP] ❌ fillSurveyBtn is NULL!');
+      }
+
       infoSection.style.display = 'block';
       console.log('[POPUP] ✓ Fill button enabled, info section shown');
 

@@ -2430,10 +2430,25 @@ async function _detectQuestionsInternal() {
         return;
       }
 
-      if (!groupedInputs.has(input.name)) {
-        groupedInputs.set(input.name, []);
+      // 🔧 LEVEL 5 MATRIX PATCH: For Decipher matrices, group by base name only
+      // Example: ans5084.0.1, ans5084.0.2, ans5084.1.1, ans5084.1.2 → all grouped under "ans5084"
+      // This allows treating all sub-rows (ans5084.0.x, ans5084.1.x, etc.) as one parent question
+      let groupKey = input.name;
+
+      // Detect Decipher matrix pattern: ansXXXX.N.M or ansXXXX.N format
+      const decipherMatrixPattern = /^(ans\d+)\.\d+/;
+      const match = input.name.match(decipherMatrixPattern);
+
+      if (match) {
+        // Use only the base name (e.g., "ans5084" from "ans5084.0.1")
+        groupKey = match[1];
+        console.log(`[LEVEL5 MATRIX PATCH] Regrouping ${input.name} → ${groupKey}`);
       }
-      groupedInputs.get(input.name).push(input);
+
+      if (!groupedInputs.has(groupKey)) {
+        groupedInputs.set(groupKey, []);
+      }
+      groupedInputs.get(groupKey).push(input);
     } else {
       // Skip text inputs associated with radio/checkbox "Other" options
       // Pattern: Text input is inside same <li> as a radio/checkbox, and input isn't checked
@@ -3277,6 +3292,86 @@ async function _detectQuestionsInternal() {
       console.log(`[MATRIX] Created checkbox matrix question with ${rows.length} rows x ${cleanOptions.length} columns`);
     });
   }
+
+  // 🔧 LEVEL 5 MATRIX PATCH: Safety pass to rebuild incomplete matrix groups
+  // Check if any matrix groups have fewer rows than expected based on the input count
+  function rebuildMatrixGroup(baseName) {
+    console.log(`[LEVEL5 MATRIX PATCH] Rebuilding matrix group for ${baseName}`);
+
+    // Find all inputs with this base name pattern
+    const matrixInputs = Array.from(document.querySelectorAll(`input[name^="${baseName}."]`));
+
+    if (matrixInputs.length === 0) {
+      console.warn(`[LEVEL5 MATRIX PATCH] No inputs found for ${baseName}`);
+      return;
+    }
+
+    // Extract unique row indices (e.g., from ans5084.0.1, ans5084.1.2 → [0, 1])
+    const rowIndices = new Set();
+    matrixInputs.forEach(input => {
+      const match = input.name.match(/^ans\d+\.(\d+)\./);
+      if (match) {
+        rowIndices.add(parseInt(match[1]));
+      }
+    });
+
+    console.log(`[LEVEL5 MATRIX PATCH] Found ${rowIndices.size} unique rows for ${baseName}:`, Array.from(rowIndices));
+
+    // Group inputs by row
+    const rowGroups = new Map();
+    matrixInputs.forEach(input => {
+      const match = input.name.match(/^(ans\d+\.\d+)\./);
+      if (match) {
+        const rowKey = match[1];
+        if (!rowGroups.has(rowKey)) {
+          rowGroups.set(rowKey, []);
+        }
+        rowGroups.get(rowKey).push(input);
+      }
+    });
+
+    console.log(`[LEVEL5 MATRIX PATCH] Grouped into ${rowGroups.size} row groups`);
+
+    // Reprocess each row as a checkbox group
+    rowGroups.forEach((inputs, rowKey) => {
+      const questionData = extractGroupedQuestionData(inputs, rowKey, detectedQuestionTexts);
+      if (questionData) {
+        // Check if this question already exists
+        const exists = detectedQuestions.some(q => q.question_id === questionData.question_id);
+        if (!exists) {
+          detectedQuestions.push(questionData);
+          console.log(`[LEVEL5 MATRIX PATCH] Added missing row: ${rowKey}`);
+        }
+      }
+    });
+  }
+
+  // Run safety check on all matrix groups
+  groupedInputs.forEach((inputs, name) => {
+    // Check if this is a Decipher matrix base name (ansXXXX without dots)
+    if (/^ans\d+$/.test(name)) {
+      // Count how many unique sub-rows exist in the DOM
+      const allMatrixInputs = Array.from(document.querySelectorAll(`input[name^="${name}."]`));
+      const uniqueRows = new Set();
+
+      allMatrixInputs.forEach(input => {
+        const match = input.name.match(/^ans\d+\.(\d+)\./);
+        if (match) {
+          uniqueRows.add(parseInt(match[1]));
+        }
+      });
+
+      // Count how many rows we detected as separate questions
+      const detectedRows = detectedQuestions.filter(q =>
+        q.question_id && q.question_id.startsWith(name)
+      ).length;
+
+      if (uniqueRows.size > 0 && detectedRows < uniqueRows.size) {
+        console.warn(`[LEVEL5 MATRIX PATCH] Incomplete matrix detected for ${name}: found ${uniqueRows.size} rows in DOM but only ${detectedRows} detected`);
+        rebuildMatrixGroup(name);
+      }
+    }
+  });
 
   // SPECIAL: Group multi-part postal/zip code fields (e.g., part16b, part26c with maxlength="3")
   const postalCodeFields = individualInputs.filter(input => {

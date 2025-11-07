@@ -1692,6 +1692,94 @@ function similarityMatch(a, b, platform, questionType, threshold = null) {
   };
 }
 
+// 🎯 Detect Decipher rank-order grid (ranksort) questions
+function detectDecipherRanksortQuestions() {
+  const questions = [];
+
+  // Look for ranksort containers
+  const ranksortContainers = document.querySelectorAll('.sq-ranksort-container');
+
+  ranksortContainers.forEach((container, index) => {
+    try {
+      // Find the parent question div
+      const questionDiv = container.closest('.question');
+      if (!questionDiv) {
+        console.log(`[RANKSORT] Container ${index} has no parent .question div`);
+        return;
+      }
+
+      const questionId = questionDiv.id.replace('question_', '');
+      console.log(`[RANKSORT] Detected ranksort question: ${questionId}`);
+
+      // Extract question text
+      const questionTextEl = questionDiv.querySelector('.question-text');
+      const questionText = questionTextEl ? questionTextEl.textContent.trim() : '';
+
+      // Extract all cards (items to be ranked)
+      const cards = Array.from(container.querySelectorAll('.sq-ranksort-card'));
+      const items = cards.map(card => {
+        const textEl = card.querySelector('.sq-ranksort-card-text');
+        const text = textEl ? textEl.textContent.trim() : '';
+        const cardId = card.id;
+        const dataIndex = card.getAttribute('data-index');
+
+        return {
+          text,
+          cardId,
+          dataIndex,
+          element: card
+        };
+      });
+
+      // Extract buckets (rank positions)
+      const buckets = Array.from(container.querySelectorAll('.sq-ranksort-bucket'));
+      const rankPositions = buckets.map((bucket, idx) => {
+        const textEl = bucket.querySelector('.sq-ranksort-bucket-text');
+        const text = textEl ? textEl.textContent.trim() : `#${idx + 1}`;
+        return {
+          text,
+          rank: idx,
+          element: bucket
+        };
+      });
+
+      // Extract minRanks from jsexport if available
+      let minRanks = rankPositions.length;
+      const scriptTags = document.querySelectorAll('script');
+      for (const script of scriptTags) {
+        if (script.textContent.includes(`"label": "${questionId}"`)) {
+          const match = script.textContent.match(/"minRanks":\s*(\d+)/);
+          if (match) {
+            minRanks = parseInt(match[1]);
+            console.log(`[RANKSORT] Extracted minRanks=${minRanks} from jsexport`);
+          }
+          break;
+        }
+      }
+
+      console.log(`[RANKSORT] Found ${items.length} items, ${rankPositions.length} buckets, minRanks=${minRanks}`);
+
+      // Create question object
+      const question = {
+        question_id: questionId,
+        question_text: questionText,
+        question_type: 'ranksort',
+        element: container,
+        items,
+        rankPositions,
+        minRanks,
+        isRanksort: true
+      };
+
+      questions.push(question);
+    } catch (e) {
+      console.error(`[RANKSORT] Error detecting ranksort question:`, e);
+    }
+  });
+
+  return questions;
+}
+
 // Detect Quest Mindshare custom div-based questions
 function detectQuestMindshareQuestions() {
   const questions = [];
@@ -2044,7 +2132,14 @@ async function _detectQuestionsInternal() {
   console.log('[DETECTION] Starting fresh question detection...');
   console.log(`[HEAL] Platform detected: ${platform}`);
 
-  // FIRST: Check for Quest Mindshare custom div-based questions
+  // FIRST: Check for Decipher ranksort questions
+  const ranksortQuestions = detectDecipherRanksortQuestions();
+  if (ranksortQuestions.length > 0) {
+    console.log(`[DETECTION] Found ${ranksortQuestions.length} Decipher ranksort questions`);
+    detectedQuestions.push(...ranksortQuestions);
+  }
+
+  // SECOND: Check for Quest Mindshare custom div-based questions
   const customQuestions = detectQuestMindshareQuestions();
   if (customQuestions.length > 0) {
     console.log(`[DETECTION] Found ${customQuestions.length} Quest Mindshare custom questions`);
@@ -9798,6 +9893,169 @@ async function fillQuestion(question, answer) {
         element.value = answer.answer;
         element.dispatchEvent(new Event('input', { bubbles: true }));
         element.dispatchEvent(new Event('change', { bubbles: true }));
+        break;
+
+      case 'ranksort':
+        console.log(`[RANKSORT] Filling rank-order grid question`);
+        console.log(`[RANKSORT] Answer format:`, answer.answer);
+
+        // Answer should be an array of ranked items (ordered by rank)
+        // Example: ["Flavour", "Price", "Organic"]
+        let rankedItems = Array.isArray(answer.answer) ? answer.answer : [answer.answer];
+        console.log(`[RANKSORT] Need to rank ${rankedItems.length} items: ${rankedItems.join(', ')}`);
+
+        // Get the buckets and cards
+        const bucketElements = Array.from(element.querySelectorAll('.sq-ranksort-bucket'));
+        const cardsList = element.querySelector('.sq-ranksort-cards');
+
+        console.log(`[RANKSORT] Found ${bucketElements.length} buckets and ${question.items.length} cards`);
+
+        // Track which cards were moved
+        let movedCount = 0;
+
+        // For each ranked item (in order), find matching card and move to bucket
+        rankedItems.forEach((rankedItem, rankIndex) => {
+          if (rankIndex >= bucketElements.length) {
+            console.warn(`[RANKSORT] Rank ${rankIndex + 1} exceeds available buckets (${bucketElements.length})`);
+            return;
+          }
+
+          // Find matching card using Level 5 fuzzy matching
+          let bestMatch = null;
+          let bestScore = 0;
+
+          question.items.forEach(item => {
+            const result = similarityMatch(rankedItem, item.text, platform, questionType);
+            if (result.score > bestScore) {
+              bestScore = result.score;
+              bestMatch = item;
+            }
+          });
+
+          if (!bestMatch || bestScore < tunedParams.fuzzyThreshold) {
+            console.warn(`[RANKSORT] No match found for "${rankedItem}" (best score: ${bestScore.toFixed(2)})`);
+            return;
+          }
+
+          console.log(`[LEVEL 5 MATCH] Ranksort: "${bestMatch.text}" ↔ "${rankedItem}" (sim=${bestScore.toFixed(2)}, threshold=${tunedParams.fuzzyThreshold.toFixed(2)})`);
+
+          const card = bestMatch.element;
+          const targetBucket = bucketElements[rankIndex];
+
+          try {
+            // METHOD 1: Try to use drag/drop simulation
+            console.log(`[RANKSORT] Moving card "${bestMatch.text}" to rank ${rankIndex + 1} (${targetBucket.querySelector('.sq-ranksort-bucket-text')?.textContent || '#' + (rankIndex + 1)})`);
+
+            // Get coordinates for drag simulation
+            const cardRect = card.getBoundingClientRect();
+            const bucketRect = targetBucket.getBoundingClientRect();
+
+            const cardX = cardRect.left + cardRect.width / 2;
+            const cardY = cardRect.top + cardRect.height / 2;
+            const bucketX = bucketRect.left + bucketRect.width / 2;
+            const bucketY = bucketRect.top + bucketRect.height / 2;
+
+            // Simulate drag events
+            const dragStartEvent = new DragEvent('dragstart', {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              clientX: cardX,
+              clientY: cardY,
+              dataTransfer: new DataTransfer()
+            });
+            card.dispatchEvent(dragStartEvent);
+
+            const dragEnterEvent = new DragEvent('dragenter', {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              clientX: bucketX,
+              clientY: bucketY
+            });
+            targetBucket.dispatchEvent(dragEnterEvent);
+
+            const dragOverEvent = new DragEvent('dragover', {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              clientX: bucketX,
+              clientY: bucketY
+            });
+            targetBucket.dispatchEvent(dragOverEvent);
+
+            const dropEvent = new DragEvent('drop', {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              clientX: bucketX,
+              clientY: bucketY,
+              dataTransfer: new DataTransfer()
+            });
+            targetBucket.dispatchEvent(dropEvent);
+
+            const dragEndEvent = new DragEvent('dragend', {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              clientX: bucketX,
+              clientY: bucketY
+            });
+            card.dispatchEvent(dragEndEvent);
+
+            // METHOD 2: Direct DOM manipulation as fallback
+            // Move card to bucket by appending it
+            targetBucket.appendChild(card);
+
+            // Update the hidden select dropdown
+            const selectElement = document.querySelector(`select[name*="${bestMatch.dataIndex}"]`);
+            if (selectElement) {
+              selectElement.value = String(rankIndex);
+              selectElement.dispatchEvent(new Event('change', { bubbles: true }));
+              console.log(`[RANKSORT] Updated hidden select for item ${bestMatch.dataIndex} to rank ${rankIndex}`);
+            }
+
+            // Update card's rank icon
+            const rankIcon = card.querySelector('.sq-ranksort-icon-rank');
+            if (rankIcon) {
+              rankIcon.textContent = String(rankIndex + 1);
+              rankIcon.classList.remove('sq-ranksort-hidden');
+            }
+
+            movedCount++;
+
+            // Record successful pattern for meta-learning
+            recordHeuristic(platform, questionType, 'ranksortMatch', {
+              itemText: bestMatch.text,
+              answerText: rankedItem,
+              similarity: bestScore
+            }, true);
+
+          } catch (e) {
+            console.error(`[RANKSORT] Error moving card:`, e);
+            recordHeuristic(platform, questionType, 'ranksortError', {
+              error: e.message
+            }, false);
+          }
+        });
+
+        console.log(`[RANKSORT] Moved ${movedCount} out of ${rankedItems.length} items to buckets`);
+
+        // Trigger Decipher validation update if available
+        try {
+          if (typeof Survey !== 'undefined' && Survey.question && Survey.question.ranksort) {
+            if (typeof Survey.question.ranksort.update === 'function') {
+              console.log(`[RANKSORT] Calling Survey.question.ranksort.update()`);
+              Survey.question.ranksort.update(question.question_id);
+            }
+          }
+        } catch (e) {
+          console.warn(`[RANKSORT] Could not trigger ranksort update:`, e);
+        }
+
+        // Trigger change event on container
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+
         break;
     }
 

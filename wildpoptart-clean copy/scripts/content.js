@@ -2038,7 +2038,13 @@ async function _detectQuestionsInternal() {
     if (inputs.length > 0) {
       const questionData = extractGroupedQuestionData(inputs, name, detectedQuestionTexts);
       if (questionData) {
-        detectedQuestions.push(questionData);
+        // 🔧 LEVEL 3 DUAL-COLUMN: Handle dual-column response (returns multiple questions)
+        if (questionData.isDualColumn && Array.isArray(questionData.questions)) {
+          console.log(`[DUAL-COLUMN] Adding ${questionData.questions.length} split questions to detectedQuestions`);
+          detectedQuestions.push(...questionData.questions);
+        } else {
+          detectedQuestions.push(questionData);
+        }
       }
     }
   });
@@ -3478,6 +3484,130 @@ function extractGroupedQuestionData(inputs, name, detectedQuestionTexts = null) 
     if (hasChecked) {
       console.log(`[DETECTION] ✓ Including pre-filled radio question for verification: name="${name}" (will check if answer matches persona)`);
       // Note: We'll mark this as pre-filled below so fillQuestion can handle it carefully
+    }
+  }
+
+  // 🔧 LEVEL 3 DUAL-COLUMN SELF-HEALING FIX
+  // Detect and split dual-column "most/least" matrix questions where all inputs share the same name
+  // Problem: Inputs with identical name="f1" but different columns can't be distinguished
+  // Solution: Use x-coordinate position to split into left/right columns and create synthetic sub-groups
+  if ((type === 'checkbox' || type === 'radio') && inputs.length >= 2) {
+    // Check for most/least pattern by class names or question text
+    const hasMostClass = inputs.some(input => input.className && input.className.includes('most'));
+    const hasLeastClass = inputs.some(input => input.className && input.className.includes('least'));
+
+    // If we detect most/least classes, this is a dual-column question
+    if (hasMostClass && hasLeastClass) {
+      console.log(`[DUAL-COLUMN] ✓ Detected most/least dual-column question with same name="${name}"`);
+
+      // Get x-coordinates for all inputs
+      const inputsWithPosition = inputs.map(input => {
+        const rect = input.getBoundingClientRect();
+        return {
+          input: input,
+          x: rect.left + rect.width / 2 // Use center x-coordinate
+        };
+      });
+
+      // Calculate midpoint between min and max x positions
+      const xPositions = inputsWithPosition.map(item => item.x);
+      const minX = Math.min(...xPositions);
+      const maxX = Math.max(...xPositions);
+      const midX = (minX + maxX) / 2;
+
+      console.log(`[DUAL-COLUMN] X-position range: ${minX.toFixed(1)} to ${maxX.toFixed(1)}, midpoint: ${midX.toFixed(1)}`);
+
+      // Split into left (least) and right (most) columns
+      const leftInputs = inputsWithPosition.filter(item => item.x < midX).map(item => item.input);
+      const rightInputs = inputsWithPosition.filter(item => item.x >= midX).map(item => item.input);
+
+      // Verify we have inputs in both columns
+      if (leftInputs.length > 0 && rightInputs.length > 0) {
+        console.log(`[DUAL-COLUMN] Split into ${leftInputs.length} left-column inputs and ${rightInputs.length} right-column inputs`);
+
+        // Determine which column is "least" and which is "most" based on class names
+        const firstLeftHasLeast = leftInputs[0].className && leftInputs[0].className.includes('least');
+        const firstRightHasMost = rightInputs[0].className && rightInputs[0].className.includes('most');
+
+        let leastInputs, mostInputs;
+        if (firstLeftHasLeast && firstRightHasMost) {
+          leastInputs = leftInputs;
+          mostInputs = rightInputs;
+        } else {
+          // If class detection is ambiguous, assume left=least, right=most
+          console.log(`[DUAL-COLUMN] ⚠️ Class-based column detection ambiguous, assuming left=least, right=most`);
+          leastInputs = leftInputs;
+          mostInputs = rightInputs;
+        }
+
+        console.log(`[DUAL-COLUMN] Creating synthetic sub-groups: "${name}_least" and "${name}_most"`);
+
+        // Recursively process each column as a separate question
+        const leastQuestion = extractGroupedQuestionData(leastInputs, `${name}_least`, detectedQuestionTexts);
+        const mostQuestion = extractGroupedQuestionData(mostInputs, `${name}_most`, detectedQuestionTexts);
+
+        // Enhance question text to clarify column context
+        if (leastQuestion && leastQuestion.question_text) {
+          // Check if question already contains "least" - if not, prepend it
+          if (!leastQuestion.question_text.toLowerCase().includes('least')) {
+            leastQuestion.question_text = `[LEAST LIKELY] ${leastQuestion.question_text}`;
+          }
+          console.log(`[DUAL-COLUMN] Enhanced least question text: "${leastQuestion.question_text.substring(0, 80)}..."`);
+        }
+        if (mostQuestion && mostQuestion.question_text) {
+          // Check if question already contains "most" - if not, prepend it
+          if (!mostQuestion.question_text.toLowerCase().includes('most')) {
+            mostQuestion.question_text = `[MOST LIKELY] ${mostQuestion.question_text}`;
+          }
+          console.log(`[DUAL-COLUMN] Enhanced most question text: "${mostQuestion.question_text.substring(0, 80)}..."`);
+        }
+
+        // Record this healing pattern in the database
+        if (window.selfHeal && window.selfHeal.recordHealing) {
+          const platform = window.selfHeal.detectPlatform();
+          window.selfHeal.recordHealing(platform, 'dualColumnMerge', {
+            split: 'xPosition',
+            originalName: name,
+            syntheticNames: [`${name}_least`, `${name}_most`],
+            detectionMethod: 'mostLeastClasses',
+            timestamp: Date.now()
+          }).catch(err => console.warn('[DUAL-COLUMN] Failed to record healing:', err));
+        }
+
+        // Return both questions as an array (caller must handle this)
+        return { isDualColumn: true, questions: [leastQuestion, mostQuestion].filter(q => q !== null) };
+      } else {
+        console.log(`[DUAL-COLUMN] ⚠️ Split failed - one column is empty (left: ${leftInputs.length}, right: ${rightInputs.length})`);
+        // Fall through to normal processing
+      }
+    } else if (inputs.length >= 4) {
+      // Optional: Check for dual-column pattern even without explicit classes
+      // This handles cases where column count is even and inputs are spatially separated
+      const inputsWithPosition = inputs.map(input => {
+        const rect = input.getBoundingClientRect();
+        return {
+          input: input,
+          x: rect.left + rect.width / 2
+        };
+      });
+
+      const xPositions = inputsWithPosition.map(item => item.x);
+      const minX = Math.min(...xPositions);
+      const maxX = Math.max(...xPositions);
+      const midX = (minX + maxX) / 2;
+
+      const leftInputs = inputsWithPosition.filter(item => item.x < midX).map(item => item.input);
+      const rightInputs = inputsWithPosition.filter(item => item.x >= midX).map(item => item.input);
+
+      // Only treat as dual-column if:
+      // 1. Both columns have equal or nearly equal counts (difference < 2)
+      // 2. Both columns are non-empty
+      const countDiff = Math.abs(leftInputs.length - rightInputs.length);
+      if (leftInputs.length > 0 && rightInputs.length > 0 && countDiff < 2) {
+        console.log(`[DUAL-COLUMN] ⚠️ Detected potential dual-column pattern without explicit classes (left: ${leftInputs.length}, right: ${rightInputs.length})`);
+        console.log(`[DUAL-COLUMN] Column count difference: ${countDiff} (treating as single-column since most/least classes not found)`);
+        // Fall through to normal processing - don't split without explicit most/least indicators
+      }
     }
   }
 

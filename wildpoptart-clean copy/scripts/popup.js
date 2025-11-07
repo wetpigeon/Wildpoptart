@@ -1,6 +1,8 @@
 // Wildpoptart Popup Script
 
 document.addEventListener('DOMContentLoaded', async () => {
+  console.log('[POPUP] DOM loaded, initializing...');
+
   // Get DOM elements
   const apiKeyInput = document.getElementById('apiKey');
   const saveApiKeyBtn = document.getElementById('saveApiKey');
@@ -20,6 +22,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   const questionsCount = document.getElementById('questionsCount');
   const personaInfo = document.getElementById('personaInfo');
 
+  // Verify critical elements exist
+  if (!toggleExtensionBtn) {
+    console.error('[POPUP] ERROR: toggleExtensionBtn not found!');
+    return;
+  }
+  console.log('[POPUP] ✓ All elements found');
+
   let isActive = false;
   let hasApiKey = false;
   let autoFill = false;
@@ -27,15 +36,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load saved settings
   await loadSettings();
 
-  // Event listeners
-  saveApiKeyBtn.addEventListener('click', saveApiKey);
-  toggleApiKeyBtn.addEventListener('click', toggleApiKeyVisibility);
-  toggleExtensionBtn.addEventListener('click', toggleExtension);
-  fillSurveyBtn.addEventListener('click', fillSurvey);
-  resetPersonaBtn.addEventListener('click', resetPersona);
-  exportDatabaseBtn.addEventListener('click', exportDatabase);
-  debugSnapshotBtn.addEventListener('click', captureDebugSnapshot);
-  autoFillCheckbox.addEventListener('change', toggleAutoFill);
+  // Event listeners with verification
+  console.log('[POPUP] Attaching event listeners...');
+  if (saveApiKeyBtn) saveApiKeyBtn.addEventListener('click', saveApiKey);
+  if (toggleApiKeyBtn) toggleApiKeyBtn.addEventListener('click', toggleApiKeyVisibility);
+  if (toggleExtensionBtn) {
+    toggleExtensionBtn.addEventListener('click', toggleExtension);
+    console.log('[POPUP] ✓ toggleExtension event listener attached');
+  }
+  if (fillSurveyBtn) fillSurveyBtn.addEventListener('click', fillSurvey);
+  if (resetPersonaBtn) resetPersonaBtn.addEventListener('click', resetPersona);
+  if (exportDatabaseBtn) exportDatabaseBtn.addEventListener('click', exportDatabase);
+  if (debugSnapshotBtn) debugSnapshotBtn.addEventListener('click', captureDebugSnapshot);
+  if (autoFillCheckbox) autoFillCheckbox.addEventListener('change', toggleAutoFill);
+
+  console.log('[POPUP] ✓ All event listeners attached');
 
   // Load settings from storage
   async function loadSettings() {
@@ -302,4 +317,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       feedbackMessage.style.display = 'none';
     }, duration);
   }
+
+  // FAILSAFE: Add onclick directly to button as backup
+  if (toggleExtensionBtn) {
+    toggleExtensionBtn.onclick = function(e) {
+      console.log('[POPUP] Button clicked via onclick handler');
+      e.preventDefault();
+      e.stopPropagation();
+      toggleExtension();
+    };
+  }
+
+  // Test: Verify button is clickable
+  console.log('[POPUP] Button element:', toggleExtensionBtn);
+  console.log('[POPUP] Button onclick:', toggleExtensionBtn.onclick);
+  console.log('[POPUP] Button disabled:', toggleExtensionBtn.disabled);
+  console.log('[POPUP] Button style.pointerEvents:', toggleExtensionBtn.style.pointerEvents);
+  console.log('[POPUP] Initialization complete!');
 });

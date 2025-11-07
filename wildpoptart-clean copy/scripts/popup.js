@@ -39,12 +39,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Load settings from storage
   async function loadSettings() {
+    console.log('[POPUP] Loading settings...');
     const storage = await chrome.storage.local.get(['claudeApiKey', 'isActive', 'currentPersona', 'autoFill']);
+    console.log('[POPUP] Storage contents:', storage);
 
     if (storage.claudeApiKey) {
       apiKeyInput.value = storage.claudeApiKey;
       hasApiKey = true;
+      console.log('[POPUP] ✓ API key loaded, hasApiKey =', hasApiKey);
       showFeedback('API key loaded', 'success');
+    } else {
+      console.log('[POPUP] ✗ No API key in storage');
     }
 
     if (storage.isActive) {
@@ -72,19 +77,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Save API key
   async function saveApiKey() {
     const apiKey = apiKeyInput.value.trim();
+    console.log('[POPUP] Saving API key, length:', apiKey.length);
 
     if (!apiKey) {
       showFeedback('Please enter an API key', 'error');
+      console.error('[POPUP] Empty API key');
       return;
     }
 
     if (!apiKey.startsWith('sk-ant-')) {
       showFeedback('Invalid API key format', 'error');
+      console.error('[POPUP] Invalid API key format, starts with:', apiKey.substring(0, 10));
       return;
     }
 
     await chrome.storage.local.set({ claudeApiKey: apiKey });
     hasApiKey = true;
+    console.log('[POPUP] ✓ API key saved, hasApiKey =', hasApiKey);
     showFeedback('API key saved successfully!', 'success');
   }
 
@@ -101,22 +110,37 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Toggle extension on/off
   async function toggleExtension() {
+    console.log('[POPUP] toggleExtension called, hasApiKey:', hasApiKey);
+
     if (!hasApiKey) {
       showFeedback('Please save your API key first', 'error');
+      console.error('[POPUP] No API key found!');
       return;
     }
 
     isActive = !isActive;
+    console.log('[POPUP] Toggling to:', isActive);
 
     await chrome.storage.local.set({ isActive });
 
     // Send message to content script
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    console.log('[POPUP] Current tab:', tab?.url);
+
+    if (!tab) {
+      showFeedback('No active tab found', 'error');
+      return;
+    }
 
     if (tab) {
+      console.log('[POPUP] Sending toggle message to tab:', tab.id);
       chrome.tabs.sendMessage(tab.id, { action: 'toggle', enabled: isActive }, (response) => {
+        console.log('[POPUP] Response from content script:', response);
+        console.log('[POPUP] Last error:', chrome.runtime.lastError);
+
         if (chrome.runtime.lastError) {
           showFeedback('Please refresh the page to use Wildpoptart', 'warning');
+          console.error('[POPUP] Content script error:', chrome.runtime.lastError.message);
         } else {
           updateStatus(isActive);
           if (isActive) {

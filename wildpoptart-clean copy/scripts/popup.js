@@ -1,10 +1,6 @@
 // Wildpoptart Popup Script
-console.log('[POPUP] Script file loaded');
 
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log('[POPUP] DOM loaded, initializing...');
-  alert('[POPUP] Popup initializing - check console');
-
   // Get DOM elements
   const apiKeyInput = document.getElementById('apiKey');
   const saveApiKeyBtn = document.getElementById('saveApiKey');
@@ -24,13 +20,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const questionsCount = document.getElementById('questionsCount');
   const personaInfo = document.getElementById('personaInfo');
 
-  // Verify critical elements exist
-  if (!toggleExtensionBtn) {
-    console.error('[POPUP] ERROR: toggleExtensionBtn not found!');
-    return;
-  }
-  console.log('[POPUP] ✓ All elements found');
-
   let isActive = false;
   let hasApiKey = false;
   let autoFill = false;
@@ -38,35 +27,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load saved settings
   await loadSettings();
 
-  // Event listeners with verification
-  console.log('[POPUP] Attaching event listeners...');
-  if (saveApiKeyBtn) saveApiKeyBtn.addEventListener('click', saveApiKey);
-  if (toggleApiKeyBtn) toggleApiKeyBtn.addEventListener('click', toggleApiKeyVisibility);
-  if (toggleExtensionBtn) {
-    toggleExtensionBtn.addEventListener('click', toggleExtension);
-    console.log('[POPUP] ✓ toggleExtension event listener attached');
-  }
-  if (fillSurveyBtn) fillSurveyBtn.addEventListener('click', fillSurvey);
-  if (resetPersonaBtn) resetPersonaBtn.addEventListener('click', resetPersona);
-  if (exportDatabaseBtn) exportDatabaseBtn.addEventListener('click', exportDatabase);
-  if (debugSnapshotBtn) debugSnapshotBtn.addEventListener('click', captureDebugSnapshot);
-  if (autoFillCheckbox) autoFillCheckbox.addEventListener('change', toggleAutoFill);
-
-  console.log('[POPUP] ✓ All event listeners attached');
+  // Event listeners
+  saveApiKeyBtn.addEventListener('click', saveApiKey);
+  toggleApiKeyBtn.addEventListener('click', toggleApiKeyVisibility);
+  toggleExtensionBtn.addEventListener('click', toggleExtension);
+  fillSurveyBtn.addEventListener('click', fillSurvey);
+  resetPersonaBtn.addEventListener('click', resetPersona);
+  exportDatabaseBtn.addEventListener('click', exportDatabase);
+  debugSnapshotBtn.addEventListener('click', captureDebugSnapshot);
+  autoFillCheckbox.addEventListener('change', toggleAutoFill);
 
   // Load settings from storage
   async function loadSettings() {
-    console.log('[POPUP] Loading settings...');
     const storage = await chrome.storage.local.get(['claudeApiKey', 'isActive', 'currentPersona', 'autoFill']);
-    console.log('[POPUP] Storage contents:', storage);
 
     if (storage.claudeApiKey) {
       apiKeyInput.value = storage.claudeApiKey;
       hasApiKey = true;
-      console.log('[POPUP] ✓ API key loaded, hasApiKey =', hasApiKey);
       showFeedback('API key loaded', 'success');
-    } else {
-      console.log('[POPUP] ✗ No API key in storage');
     }
 
     if (storage.isActive) {
@@ -94,23 +72,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Save API key
   async function saveApiKey() {
     const apiKey = apiKeyInput.value.trim();
-    console.log('[POPUP] Saving API key, length:', apiKey.length);
 
     if (!apiKey) {
       showFeedback('Please enter an API key', 'error');
-      console.error('[POPUP] Empty API key');
       return;
     }
 
     if (!apiKey.startsWith('sk-ant-')) {
       showFeedback('Invalid API key format', 'error');
-      console.error('[POPUP] Invalid API key format, starts with:', apiKey.substring(0, 10));
       return;
     }
 
     await chrome.storage.local.set({ claudeApiKey: apiKey });
     hasApiKey = true;
-    console.log('[POPUP] ✓ API key saved, hasApiKey =', hasApiKey);
     showFeedback('API key saved successfully!', 'success');
   }
 
@@ -127,84 +101,43 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Toggle extension on/off
   async function toggleExtension() {
-    console.log('[POPUP] toggleExtension called, hasApiKey:', hasApiKey);
-
     if (!hasApiKey) {
       showFeedback('Please save your API key first', 'error');
-      console.error('[POPUP] No API key found!');
       return;
     }
 
     isActive = !isActive;
-    console.log('[POPUP] Toggling to:', isActive);
 
     await chrome.storage.local.set({ isActive });
 
-    // UPDATE UI IMMEDIATELY - don't wait for content script
-    updateStatus(isActive);
-    console.log('[POPUP] ✓ UI updated to:', isActive ? 'Active' : 'Inactive');
-
     // Send message to content script
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    console.log('[POPUP] Current tab:', tab?.url);
 
-    if (!tab) {
-      showFeedback('Extension activated! Navigate to a survey page to use it.', 'success');
-      return;
+    if (tab) {
+      chrome.tabs.sendMessage(tab.id, { action: 'toggle', enabled: isActive }, (response) => {
+        if (chrome.runtime.lastError) {
+          showFeedback('Please refresh the page to use Wildpoptart', 'warning');
+        } else {
+          updateStatus(isActive);
+          if (isActive) {
+            loadSurveyInfo();
+          }
+        }
+      });
     }
-
-    console.log('[POPUP] Sending toggle message to tab:', tab.id);
-    chrome.tabs.sendMessage(tab.id, { action: 'toggle', enabled: isActive }, (response) => {
-      console.log('[POPUP] Response from content script:', response);
-      console.log('[POPUP] Last error:', chrome.runtime.lastError);
-
-      if (chrome.runtime.lastError) {
-        console.warn('[POPUP] Content script not loaded on this page:', chrome.runtime.lastError.message);
-        if (isActive) {
-          showFeedback('✓ Activated! Refresh survey pages or open new ones.', 'warning');
-        } else {
-          showFeedback('Deactivated', 'info');
-        }
-      } else {
-        console.log('[POPUP] ✓ Content script responded successfully');
-        if (isActive) {
-          loadSurveyInfo();
-          showFeedback('✓ Wildpoptart is active on this page!', 'success');
-        } else {
-          showFeedback('Deactivated', 'info');
-        }
-      }
-    });
   }
 
   // Update status UI
-  function updateStatus(active, showMessage = false) {
-    console.log('[POPUP] updateStatus called, active:', active, 'showMessage:', showMessage);
-    console.log('[POPUP] fillSurveyBtn exists?', !!fillSurveyBtn);
-
+  function updateStatus(active) {
     if (active) {
       statusDot.classList.add('active');
       statusText.textContent = 'Active';
       toggleIcon.textContent = '⏸️';
       toggleText.textContent = 'Deactivate';
       toggleExtensionBtn.classList.add('active');
-
-      // CRITICAL: Enable the fill button
-      if (fillSurveyBtn) {
-        fillSurveyBtn.disabled = false;
-        fillSurveyBtn.style.display = 'block';
-        fillSurveyBtn.style.opacity = '1';
-        console.log('[POPUP] ✓ Fill button: disabled=false, display=block, opacity=1');
-      } else {
-        console.error('[POPUP] ❌ fillSurveyBtn is NULL!');
-      }
-
+      fillSurveyBtn.disabled = false;
       infoSection.style.display = 'block';
-      console.log('[POPUP] ✓ Fill button enabled, info section shown');
-
-      if (showMessage) {
-        showFeedback('Wildpoptart is now active on this page', 'success');
-      }
+      showFeedback('Wildpoptart is now active on this page', 'success');
     } else {
       statusDot.classList.remove('active');
       statusText.textContent = 'Inactive';
@@ -213,10 +146,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       toggleExtensionBtn.classList.remove('active');
       fillSurveyBtn.disabled = true;
       infoSection.style.display = 'none';
-
-      if (showMessage) {
-        showFeedback('Wildpoptart is now inactive', 'info');
-      }
+      showFeedback('Wildpoptart is now inactive', 'info');
     }
   }
 
@@ -348,21 +278,4 @@ document.addEventListener('DOMContentLoaded', async () => {
       feedbackMessage.style.display = 'none';
     }, duration);
   }
-
-  // FAILSAFE: Add onclick directly to button as backup
-  if (toggleExtensionBtn) {
-    toggleExtensionBtn.onclick = function(e) {
-      console.log('[POPUP] Button clicked via onclick handler');
-      e.preventDefault();
-      e.stopPropagation();
-      toggleExtension();
-    };
-  }
-
-  // Test: Verify button is clickable
-  console.log('[POPUP] Button element:', toggleExtensionBtn);
-  console.log('[POPUP] Button onclick:', toggleExtensionBtn.onclick);
-  console.log('[POPUP] Button disabled:', toggleExtensionBtn.disabled);
-  console.log('[POPUP] Button style.pointerEvents:', toggleExtensionBtn.style.pointerEvents);
-  console.log('[POPUP] Initialization complete!');
 });

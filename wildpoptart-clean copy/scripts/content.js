@@ -1,13 +1,13 @@
 // Wildpoptart Content Script - Page Observer and Question Detector
 
-console.log('===== VERSION 5.1.5 - Fix Curly Quote Normalization =====');
+console.log('===== VERSION 5.1.5 - Label Normalization Patch =====');
 console.log('📊 To export question database, type: exportDB()');
 console.log('🧬 To view self-healing stats, type: viewHealings()');
 console.log('🤖 AUTO-FILL MODE: The bot will automatically progress through surveys without button clicks');
-console.log('[v5.1.5] CRITICAL FIX: Added curly quote conversion to normalizeText()');
-console.log('[v5.1.5] Converts curly quotes to straight quotes before comparison');
-console.log('[v5.1.5] Added [CURLY_QUOTES_DETECTED] and [CURLY_QUOTES_NORMALIZED] logging');
-console.log('[v5.1.5] Fixes checkboxes with curly-quoted labels not being selected in Decipher');
+console.log('[v5.1.5] PATCH: Normalize labels at extraction time in getOptionLabel()');
+console.log('[v5.1.5] All labels now normalized before comparison - no redundant calls');
+console.log('[v5.1.5] Added [LABEL_NORMALIZED] and [NORMALIZED_MATCH] logging');
+console.log('[v5.1.5] Fixes checkboxes with curly-quoted labels in Decipher surveys');
 
 // State management
 let isActive = false;
@@ -4195,8 +4195,19 @@ function findQuestionTextForGroup(inputs) {
   return inputLabel;
 }
 
+// V5.1.5: Helper to normalize label text with logging
+function normalizeLabelText(rawText, inputId) {
+  if (!rawText) return '';
+  if (typeof rawText === 'object') return rawText; // Don't normalize image objects
+
+  const normalized = normalizeText(rawText);
+  console.log(`[LABEL_NORMALIZED] ${inputId}: "${rawText}" → "${normalized}"`);
+  return normalized;
+}
+
 // Get the label text specifically for a single radio/checkbox option
 // V1.9.33: Now also detects and returns image URLs for vision-based questions
+// V5.1.5: Now normalizes all text labels before returning
 function getOptionLabel(input) {
   const inputId = input.id || input.name || 'unknown';
 
@@ -4219,8 +4230,8 @@ function getOptionLabel(input) {
         inputs.forEach(inp => inp.remove());
         textLabel = clone.textContent.trim();
         console.log(`[getOptionLabel] ID="${inputId}" → IMAGE: "${imageUrl}" + TEXT: "${textLabel}"`);
-        // Return object with both image and text
-        return { image: imageUrl, text: textLabel || imageUrl.split('/').pop() };
+        // Return object with both image and text (text is normalized)
+        return { image: imageUrl, text: normalizeLabelText(textLabel || imageUrl.split('/').pop(), inputId) };
       }
     }
   }
@@ -4238,7 +4249,7 @@ function getOptionLabel(input) {
       inputs.forEach(inp => inp.remove());
       textLabel = clone.textContent.trim();
       console.log(`[getOptionLabel] ID="${inputId}" → IMAGE: "${imageUrl}" + TEXT: "${textLabel}"`);
-      return { image: imageUrl, text: textLabel || imageUrl.split('/').pop() };
+      return { image: imageUrl, text: normalizeLabelText(textLabel || imageUrl.split('/').pop(), inputId) };
     }
   }
 
@@ -4248,7 +4259,7 @@ function getOptionLabel(input) {
     const text = input.getAttribute('aria-label').trim();
     if (text.length > 0) {
       console.log(`[getOptionLabel] ID="${inputId}" → aria-label: "${text}"`);
-      return text;
+      return normalizeLabelText(text, inputId);
     }
   }
 
@@ -4257,7 +4268,7 @@ function getOptionLabel(input) {
     const text = input.getAttribute('data-column-label').trim();
     if (text.length > 0) {
       console.log(`[getOptionLabel] ID="${inputId}" → data-column-label: "${text}"`);
-      return text;
+      return normalizeLabelText(text, inputId);
     }
   }
 
@@ -4266,7 +4277,7 @@ function getOptionLabel(input) {
     const text = input.getAttribute('data-row-label').trim();
     if (text.length > 0) {
       console.log(`[getOptionLabel] ID="${inputId}" → data-row-label: "${text}"`);
-      return text;
+      return normalizeLabelText(text, inputId);
     }
   }
 
@@ -4288,7 +4299,7 @@ function getOptionLabel(input) {
       if (labelEl) {
         const text = labelEl.textContent.trim();
         console.log(`[PAIRED_COMPARISON] Extracted ${isLeftOption ? 'LEFT' : 'RIGHT'} statement: "${text.substring(0, 50)}"`);
-        if (text.length > 0) return text;
+        if (text.length > 0) return normalizeLabelText(text, inputId);
       }
     } else {
       // Check for Qualtrics checkbox matrix pattern: "header~QID~N" (row) + "QID-X-xY-col-label" (column)
@@ -4302,7 +4313,7 @@ function getOptionLabel(input) {
           const colText = colElement.textContent.trim();
           if (colText.length > 0) {
             console.log(`[getOptionLabel] ID="${inputId}" → Qualtrics matrix column: "${colText}"`);
-            return colText;
+            return normalizeLabelText(colText, inputId);
           }
         }
       }
@@ -4315,7 +4326,7 @@ function getOptionLabel(input) {
 
       if (texts.length > 0) {
         const combinedText = texts.join(' ');
-        if (combinedText.length > 0) return combinedText;
+        if (combinedText.length > 0) return normalizeLabelText(combinedText, inputId);
       }
     }
   }
@@ -4338,7 +4349,7 @@ function getOptionLabel(input) {
       }
       if (text.length > 0) {
         console.log(`[getOptionLabel] ID="${inputId}" → label[for]: "${text}"`);
-        return text;
+        return normalizeLabelText(text, inputId);
       }
     }
   }
@@ -4357,7 +4368,7 @@ function getOptionLabel(input) {
     if (text.includes(':') && text.indexOf(':') < text.length * 0.3) {
       text = text.split(':')[0].trim() + ':';
     }
-    if (text.length > 0) return text;
+    if (text.length > 0) return normalizeLabelText(text, inputId);
   }
 
   // Try next sibling (Qualtrics pattern: input followed by label text)
@@ -4374,7 +4385,7 @@ function getOptionLabel(input) {
 
     const text = nextSibling.textContent.trim();
     if (text.length > 0 && text.length < 200 && text !== 'radio' && text !== 'checkbox') {
-      return text;
+      return normalizeLabelText(text, inputId);
     }
     nextSibling = nextSibling.nextElementSibling;
     if (!nextSibling || nextSibling.tagName === 'INPUT') break;
@@ -4387,7 +4398,7 @@ function getOptionLabel(input) {
     while (parentNext) {
       const text = parentNext.textContent.trim();
       if (text.length > 0 && text.length < 200 && !text.includes('?')) {
-        return text;
+        return normalizeLabelText(text, inputId);
       }
       parentNext = parentNext.nextElementSibling;
       if (!parentNext) break;
@@ -4406,7 +4417,7 @@ function getOptionLabel(input) {
     text = text.replace(/\{@[^@}]+::[^@}]+@\}/g, '').trim();
 
     if (text.length > 0 && text.length < 200) {
-      return text;
+      return normalizeLabelText(text, inputId);
     }
   }
 
@@ -4421,7 +4432,7 @@ function getOptionLabel(input) {
     'data-row-label': input.getAttribute('data-row-label'),
     'aria-label': input.getAttribute('aria-label')
   });
-  return fallbackValue;
+  return normalizeLabelText(fallbackValue, inputId);
 }
 
 // Extract question data from an input element
@@ -6741,7 +6752,7 @@ async function fillQuestion(question, answer) {
 
         let checkedCount = 0;
         for (const checkbox of elements) {
-          const label = getOptionLabel(checkbox);
+          const label = getOptionLabel(checkbox); // Already normalized by getOptionLabel()
           console.log(`[MATRIX] Checking checkbox ID="${checkbox.id}" label="${label}"`);
 
           // Check if this checkbox should be checked
@@ -6749,8 +6760,8 @@ async function fillQuestion(question, answer) {
             const answerNorm = normalizeText(ans);
             return question.columns.some(col => {
               const colLabelNorm = normalizeText(col.label);
-              const labelNorm = normalizeText(label);
-              const matches = answerNorm === colLabelNorm || labelNorm.includes(answerNorm);
+              // Label is already normalized - no need to normalize again
+              const matches = answerNorm === colLabelNorm || label.includes(answerNorm);
               if (matches) {
                 console.log(`[MATRIX] [NORMALIZED_MATCH] label="${label}" matches answer="${ans}"`);
               }
@@ -6787,17 +6798,17 @@ async function fillQuestion(question, answer) {
 
         let filled = false;
         for (const radio of radioElements) {
-          const label = getOptionLabel(radio);
+          const label = getOptionLabel(radio); // Already normalized by getOptionLabel()
           console.log(`[MATRIX] Checking radio ID="${radio.id}" label="${label}" against answer="${rowAnswer.answer}"`);
 
           // FIXED: Compare radio button label directly against Claude's answer
           // Don't loop through all columns - that returns true if ANY column matches!
           const answerNorm = normalizeText(rowAnswer.answer);
-          const labelNorm = normalizeText(label);
+          // Label is already normalized - no need to normalize again
 
           // Use exact match only to avoid false positives
           // (e.g., "do not influence" should not match "influence")
-          const matchesAnswer = answerNorm === labelNorm;
+          const matchesAnswer = answerNorm === label;
 
           if (matchesAnswer) {
             console.log(`[MATRIX] [NORMALIZED_MATCH] Radio label="${label}" matches answer="${rowAnswer.answer}"`);
@@ -7682,15 +7693,14 @@ async function fillQuestion(question, answer) {
           const normalizedAnswer = normalizeText(radioAnswer);
 
           for (const radio of radioElements) {
-            const label = getOptionLabel(radio);
+            const label = getOptionLabel(radio); // Already normalized by getOptionLabel()
             const value = radio.value;
-            const normalizedLabel = normalizeText(label);
             const normalizedValue = normalizeText(value);
 
             if (label === radioAnswer ||
                 value === radioAnswer ||
                 radio.id === radioAnswer ||
-                normalizedLabel === normalizedAnswer ||
+                label === normalizedAnswer ||
                 normalizedValue === normalizedAnswer) {
               matchedRadio = radio;
               console.log(`[CAROUSEL] [NORMALIZED_MATCH] Matched radio input: ${radio.id}`);
@@ -7736,7 +7746,7 @@ async function fillQuestion(question, answer) {
 
         let radioMatched = false;
         radioElements.forEach(radio => {
-          const labelData = getOptionLabel(radio);  // FIX: Use getOptionLabel to get the option text, not the question text
+          const labelData = getOptionLabel(radio);  // FIX: Use getOptionLabel to get the option text, not the question text (Already normalized)
           // V5.1.1: Material UI buttons don't have .value attribute, use textContent as fallback
           const value = radio.value || radio.textContent?.trim() || '';
 
@@ -7753,14 +7763,14 @@ async function fillQuestion(question, answer) {
           radio.checked = false;
 
           // Use normalizeText for consistent Unicode normalization
-          const normalizedLabel = normalizeText(label);
+          // Label is already normalized by getOptionLabel()
           const normalizedAnswer = normalizeText(radioAnswer);
           const normalizedValue = normalizeText(value);
 
           // 🔧 ANGULAR.JS FIX: Handle duplicate text in labels (e.g., "Male Male" -> "Male")
           // If label is just the same word repeated, use single instance
-          const labelWords = normalizedLabel.split(' ');
-          let cleanedLabel = normalizedLabel;
+          const labelWords = label.split(' ');
+          let cleanedLabel = label;
           if (labelWords.length === 2 && labelWords[0] === labelWords[1]) {
             cleanedLabel = labelWords[0];
             console.log(`  ↳ Detected duplicate text in label, cleaned: "${cleanedLabel}"`);
@@ -7806,7 +7816,7 @@ async function fillQuestion(question, answer) {
           const isMatch = label === radioAnswer ||
                          value === radioAnswer ||
                          radio.id === radioAnswer ||
-                         normalizedLabel === normalizedAnswer ||
+                         label === normalizedAnswer ||
                          normalizedValue === normalizedAnswer ||
                          cleanedLabel === normalizedAnswer;
 
@@ -8831,7 +8841,7 @@ async function fillQuestion(question, answer) {
 
         // V1.9.77: Need index for IPSOS rowpicker matching
         checkboxElements.forEach((checkbox, checkboxIndex) => {
-          const labelData = getOptionLabel(checkbox);  // FIX: Use getOptionLabel instead of findQuestionText
+          const labelData = getOptionLabel(checkbox);  // FIX: Use getOptionLabel instead of findQuestionText (Already normalized)
           // V5.1.1: Material UI checkboxes (buttons) don't have .value attribute, use textContent as fallback
           const value = checkbox.value || checkbox.textContent?.trim() || '';
           const id = checkbox.id;
@@ -8846,12 +8856,12 @@ async function fillQuestion(question, answer) {
           // Check if this checkbox should be checked
           // V5.1.1: Safe handling for Material UI checkboxes without value attribute
           const safeValue = value || '';
-          const labelNorm = normalizeText(label);
+          // Label is already normalized by getOptionLabel()
           const valueNorm = normalizeText(value);
           const shouldCheck = answersArray.some(ans => {
             const ansNorm = normalizeText(ans);
             const matches = ans === label || ans === value || ans === id ||
-                           ansNorm === labelNorm ||
+                           ansNorm === label ||
                            (safeValue && ansNorm === valueNorm);
             if (matches) {
               console.log(`[NORMALIZED_MATCH] Checkbox "${id}" matches answer "${ans}"`);

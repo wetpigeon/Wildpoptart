@@ -1,10 +1,10 @@
 // Wildpoptart Content Script - Page Observer and Question Detector
 
-console.log('===== VERSION 5.1.2 - Material UI Checkbox Fallback + Self-Healing =====');
+console.log('===== VERSION 3.0.0 - Level 3: Context-Aware Self-Healing =====');
 console.log('📊 To export question database, type: exportDB()');
 console.log('🧬 To view self-healing stats, type: viewHealings()');
 console.log('🤖 AUTO-FILL MODE: The bot will automatically progress through surveys without button clicks');
-console.log('[v5.1.2] Added Material UI checkbox fallback layer with self-healing selector learning');
+console.log('[v3.0.0] Level 3 Self-Healing: Context feature extraction, pattern similarity matching, adaptive delays, predictive selector merging');
 
 // State management
 let isActive = false;
@@ -428,13 +428,13 @@ function applyStructureMap(structure) {
             currentAnchor = dialog;
             facts = extractRuntimeFacts(dialog);
 
-            // V5.1.1: Record healing - dialog search succeeded
+            // V3.0.0: Record healing with context - dialog search succeeded
             if (facts.elements.length > 0 && window.selfHeal) {
               const platform = window.selfHeal.detectPlatform();
               window.selfHeal.recordHealing(platform, 'dialogSearch', {
                 type: 'selector',
                 selectors: ['[role="dialog"]', '.MuiDialog-root', '.dialog-question']
-              });
+              }, dialog);
             }
           }
         }
@@ -4895,13 +4895,13 @@ function findQuestionText(element) {
       if (cleanText.length > 0 && cleanText.length < 200 && !/^[a-z0-9._-]+$/i.test(cleanText) && !isOptionLabel) {
         console.log(`[FIND_QUESTION_TEXT] Found via heading: "${cleanText.substring(0, 50)}"`);
 
-        // V5.1.1: Record healing - zero-width space stripping worked
+        // V3.0.0: Record healing with context - zero-width space stripping worked
         if (text.length > 0 && cleanText.length > 0 && text !== cleanText && window.selfHeal) {
           const platform = window.selfHeal.detectPlatform();
           window.selfHeal.recordHealing(platform, 'zeroWidthSpace', {
             type: 'selector',
             selectors: ['.MuiTypography-root', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'legend']
-          });
+          }, heading);
         }
 
         return cleanText;
@@ -8669,13 +8669,13 @@ async function fillQuestion(question, answer) {
                   muiMatchCount++;
                   console.log(`[FILL] ✅ Clicked Material UI checkbox for "${normalizedAns}"`);
 
-                  // Record self-healing success
+                  // V3.0.0: Record self-healing success with context
                   if (window.selfHeal) {
                     const platform = window.selfHeal.detectPlatform();
                     window.selfHeal.recordHealing(platform, 'materialUI.checkbox', {
                       type: 'selector',
                       selectors: ['.MuiListItemButton-root', '.MuiCheckbox-root', '[role="checkbox"]']
-                    });
+                    }, el);
                   }
                 }
               });
@@ -9911,15 +9911,35 @@ window.viewDB = async function() {
   return database;
 };
 
-// V5.1.1: Expose self-healing debug functions
+// V3.0.0: Expose self-healing debug functions with context features
 window.viewHealings = async function() {
   if (!window.selfHeal) {
     console.error('❌ Self-healing module not loaded');
     return;
   }
   const stats = await window.selfHeal.getHealStats();
-  console.log('🧬 Self-Healing Statistics:');
+  console.log('🧬 Self-Healing Statistics (Level 3: Context-Aware):');
   console.table(stats);
+
+  // Show detailed context features for each platform
+  const allHeals = await chrome.storage.local.get('selfHealPolicies_v1');
+  const healData = allHeals.selfHealPolicies_v1 || {};
+
+  Object.keys(healData).forEach(platform => {
+    console.log(`\n📍 Platform: ${platform}`);
+    healData[platform].forEach((heal, idx) => {
+      console.log(`  ${idx + 1}. ${heal.issue}`);
+      if (heal.contextFeatures) {
+        const ctx = heal.contextFeatures;
+        console.log(`     Context: depth=${ctx.depth}, siblings=${ctx.siblingCount}, slider=${ctx.hasSlider}, dropdown=${ctx.hasDropdown}, checkbox=${ctx.hasCheckbox}`);
+        console.log(`     Parent classes:`, ctx.parentClasses.slice(0, 5).join(', '));
+      } else {
+        console.log(`     Context: Not recorded (Level 2 heal)`);
+      }
+      console.log(`     Fix:`, heal.fix);
+    });
+  });
+
   return stats;
 };
 

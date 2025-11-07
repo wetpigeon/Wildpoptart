@@ -138,36 +138,47 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await chrome.storage.local.set({ isActive });
 
+    // UPDATE UI IMMEDIATELY - don't wait for content script
+    updateStatus(isActive);
+    console.log('[POPUP] ✓ UI updated to:', isActive ? 'Active' : 'Inactive');
+
     // Send message to content script
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     console.log('[POPUP] Current tab:', tab?.url);
 
     if (!tab) {
-      showFeedback('No active tab found', 'error');
+      showFeedback('Extension activated! Navigate to a survey page to use it.', 'success');
       return;
     }
 
-    if (tab) {
-      console.log('[POPUP] Sending toggle message to tab:', tab.id);
-      chrome.tabs.sendMessage(tab.id, { action: 'toggle', enabled: isActive }, (response) => {
-        console.log('[POPUP] Response from content script:', response);
-        console.log('[POPUP] Last error:', chrome.runtime.lastError);
+    console.log('[POPUP] Sending toggle message to tab:', tab.id);
+    chrome.tabs.sendMessage(tab.id, { action: 'toggle', enabled: isActive }, (response) => {
+      console.log('[POPUP] Response from content script:', response);
+      console.log('[POPUP] Last error:', chrome.runtime.lastError);
 
-        if (chrome.runtime.lastError) {
-          showFeedback('Please refresh the page to use Wildpoptart', 'warning');
-          console.error('[POPUP] Content script error:', chrome.runtime.lastError.message);
+      if (chrome.runtime.lastError) {
+        console.warn('[POPUP] Content script not loaded on this page:', chrome.runtime.lastError.message);
+        if (isActive) {
+          showFeedback('✓ Activated! Refresh survey pages or open new ones.', 'warning');
         } else {
-          updateStatus(isActive);
-          if (isActive) {
-            loadSurveyInfo();
-          }
+          showFeedback('Deactivated', 'info');
         }
-      });
-    }
+      } else {
+        console.log('[POPUP] ✓ Content script responded successfully');
+        if (isActive) {
+          loadSurveyInfo();
+          showFeedback('✓ Wildpoptart is active on this page!', 'success');
+        } else {
+          showFeedback('Deactivated', 'info');
+        }
+      }
+    });
   }
 
   // Update status UI
-  function updateStatus(active) {
+  function updateStatus(active, showMessage = false) {
+    console.log('[POPUP] updateStatus called, active:', active, 'showMessage:', showMessage);
+
     if (active) {
       statusDot.classList.add('active');
       statusText.textContent = 'Active';
@@ -176,7 +187,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       toggleExtensionBtn.classList.add('active');
       fillSurveyBtn.disabled = false;
       infoSection.style.display = 'block';
-      showFeedback('Wildpoptart is now active on this page', 'success');
+      console.log('[POPUP] ✓ Fill button enabled, info section shown');
+
+      if (showMessage) {
+        showFeedback('Wildpoptart is now active on this page', 'success');
+      }
     } else {
       statusDot.classList.remove('active');
       statusText.textContent = 'Inactive';
@@ -185,7 +200,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       toggleExtensionBtn.classList.remove('active');
       fillSurveyBtn.disabled = true;
       infoSection.style.display = 'none';
-      showFeedback('Wildpoptart is now inactive', 'info');
+
+      if (showMessage) {
+        showFeedback('Wildpoptart is now inactive', 'info');
+      }
     }
   }
 

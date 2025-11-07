@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Wildpoptart Survey Bot",
-  "version": "5.1.2",
-  "description": "AI-powered survey bot with self-correcting feedback loop",
+  "version": "3.0.0",
+  "description": "AI-powered survey bot with Level 3 context-aware self-healing",
   "permissions": [
     "activeTab",
     "storage",
@@ -20,7 +20,7 @@
       "matches": ["<all_urls>"],
       "js": ["scripts/selfHealPolicy.js", "scripts/content.js"],
       "css": ["styles/content.css"],
-      "run_at": "document_idle",
+      "run_at": "document_start",
       "all_frames": true
     }
   ],

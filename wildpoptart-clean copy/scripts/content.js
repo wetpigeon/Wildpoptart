@@ -6,6 +6,30 @@ console.log('🧬 To view self-healing stats, type: viewHealings()');
 console.log('🤖 AUTO-FILL MODE: The bot will automatically progress through surveys without button clicks');
 console.log('[v3.0.0] Level 3 Self-Healing: Context feature extraction, pattern similarity matching, adaptive delays, predictive selector merging');
 
+// Wait for selfHeal module to be ready
+function waitForSelfHeal(timeout = 5000) {
+  return new Promise((resolve, reject) => {
+    if (window.selfHeal) {
+      console.log('[HEAL] Self-healing module ready');
+      resolve(window.selfHeal);
+      return;
+    }
+
+    const startTime = Date.now();
+    const checkInterval = setInterval(() => {
+      if (window.selfHeal) {
+        console.log('[HEAL] Self-healing module loaded');
+        clearInterval(checkInterval);
+        resolve(window.selfHeal);
+      } else if (Date.now() - startTime > timeout) {
+        console.warn('[HEAL] Self-healing module load timeout');
+        clearInterval(checkInterval);
+        reject(new Error('selfHeal module not available'));
+      }
+    }, 50);
+  });
+}
+
 // State management
 let isActive = false;
 let autoFillEnabled = false; // Auto-fill mode - automatically process surveys without button clicks
@@ -1516,12 +1540,26 @@ async function _detectQuestionsInternal() {
   // V1.9.61: Track detected question texts to identify duplicates (for dialog detection)
   const detectedQuestionTexts = new Set();
 
-  // V5.1.1: Self-healing - detect platform for adaptive learning
+  // V3.0.0: Level 3 - Wait for self-healing module and apply heals with context
+  try {
+    await waitForSelfHeal();
+  } catch (err) {
+    console.warn('[HEAL] Self-healing module not available, continuing without healing');
+  }
+
   const platform = window.selfHeal?.detectPlatform() || 'unknown';
   const detectionStartTime = performance.now();
 
   console.log('[DETECTION] Starting fresh question detection...');
   console.log(`[HEAL] Platform detected: ${platform}`);
+
+  // V3.0.0: Apply Level 3 context-aware heals
+  let env = { candidateSelectors: [], delay: 0 };
+  if (window.selfHeal) {
+    const context = window.selfHeal.extractContextFeatures(document.body);
+    env = await window.selfHeal.applyHeals(platform, env, context);
+    console.log(`[HEAL] Applied heals - selectors: ${env.candidateSelectors.length}, delay: ${env.delay}ms`);
+  }
 
   // FIRST: Check for Quest Mindshare custom div-based questions
   const customQuestions = detectQuestMindshareQuestions();
@@ -8107,6 +8145,16 @@ async function fillQuestion(question, answer) {
                       clickableDiv.click();
 
                       console.log(`[IPSOS-ROWPICKER-RADIO] ✓ Clicked custom div successfully`);
+
+                      // V3.0.0: Record self-healing success with context
+                      if (window.selfHeal) {
+                        const platform = window.selfHeal.detectPlatform();
+                        window.selfHeal.recordHealing(platform, 'ipsos.rowpicker.radio', {
+                          type: 'selector',
+                          selectors: ['._rowpicker [tabindex="0"]', '.__flexgrid_row [tabindex="0"]']
+                        }, clickableDiv);
+                      }
+
                       break; // Found and clicked, exit loop
                     }
                   }
@@ -8459,6 +8507,15 @@ async function fillQuestion(question, answer) {
                   }
                   radioMatched = true;
                   console.log(`[FALLBACK] ✓ Successfully selected first item via Angular click`);
+
+                  // V3.0.0: Record self-healing success with context
+                  if (window.selfHeal) {
+                    const platform = window.selfHeal.detectPlatform();
+                    window.selfHeal.recordHealing(platform, 'fallback.firstItem', {
+                      type: 'selector',
+                      selectors: ['input[type="radio"]']
+                    }, firstItemMatch);
+                  }
                 }
               } else {
                 firstItemMatch.click();
@@ -8471,6 +8528,15 @@ async function fillQuestion(question, answer) {
                 }
                 radioMatched = true;
                 console.log(`[FALLBACK] ✓ Successfully selected first item via regular click`);
+
+                // V3.0.0: Record self-healing success with context
+                if (window.selfHeal) {
+                  const platform = window.selfHeal.detectPlatform();
+                  window.selfHeal.recordHealing(platform, 'fallback.firstItem', {
+                    type: 'selector',
+                    selectors: ['input[type="radio"]']
+                  }, firstItemMatch);
+                }
               }
             } else {
               console.log(`[FALLBACK] ❌ Could not match first item either, will try "None of the above"`);
@@ -8518,6 +8584,15 @@ async function fillQuestion(question, answer) {
                   }
                   radioMatched = true;
                   console.log(`[FALLBACK] ✓ Successfully selected "None of the above" via Angular click`);
+
+                  // V3.0.0: Record self-healing success with context
+                  if (window.selfHeal) {
+                    const platform = window.selfHeal.detectPlatform();
+                    window.selfHeal.recordHealing(platform, 'fallback.noneOfAbove', {
+                      type: 'selector',
+                      selectors: ['input[type="radio"]']
+                    }, noneOption);
+                  }
                 }
               } else {
                 // Regular click
@@ -8531,6 +8606,15 @@ async function fillQuestion(question, answer) {
                 }
                 radioMatched = true;
                 console.log(`[FALLBACK] ✓ Successfully selected "None of the above" via regular click`);
+
+                // V3.0.0: Record self-healing success with context
+                if (window.selfHeal) {
+                  const platform = window.selfHeal.detectPlatform();
+                  window.selfHeal.recordHealing(platform, 'fallback.noneOfAbove', {
+                    type: 'selector',
+                    selectors: ['input[type="radio"]']
+                  }, noneOption);
+                }
               }
             } else {
               console.warn(`[FALLBACK] ⚠️ "None of the above" option not found in radio buttons`);
@@ -8827,6 +8911,34 @@ async function fillQuestion(question, answer) {
           answersArray = answersArray.slice(0, question.maxAllowed);
         }
 
+        // V3.0.0: UNCHECK all currently checked boxes that are NOT in the desired answer array
+        // This ensures we overwrite prefilled values when persona's answer differs
+        console.log('[V3.0.0] Checking for prefilled checkboxes to uncheck...');
+        checkboxElements.forEach(checkbox => {
+          if (checkbox.checked) {
+            const labelData = getOptionLabel(checkbox);
+            const value = checkbox.value || checkbox.textContent?.trim() || '';
+            const id = checkbox.id;
+            let label = labelData;
+            if (typeof labelData === 'object' && labelData !== null && labelData.text) {
+              label = labelData.text;
+            }
+
+            const shouldKeep = answersArray.some(ans =>
+              ans === label || ans === value || ans === id ||
+              String(ans).toLowerCase() === String(label).toLowerCase() ||
+              (value && String(ans).toLowerCase() === value.toLowerCase())
+            );
+
+            if (!shouldKeep) {
+              console.log(`[V3.0.0] ⚠️ Unchecking prefilled checkbox: "${label}" (not in desired answers)`);
+              checkbox.checked = false;
+              checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+              checkbox.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+          }
+        });
+
         let checkboxMatchCount = 0;
 
         // V1.9.77: Need index for IPSOS rowpicker matching
@@ -8989,6 +9101,15 @@ async function fillQuestion(question, answer) {
                   console.log(`[IPSOS-ROWPICKER-CHECKBOX] Verification: hidden input value = "${hiddenInput.value}"`);
                 }
               }, 100);
+
+              // V3.0.0: Record self-healing success with context
+              if (window.selfHeal) {
+                const platform = window.selfHeal.detectPlatform();
+                window.selfHeal.recordHealing(platform, 'ipsos.rowpicker.checkbox', {
+                  type: 'selector',
+                  selectors: ['[tabindex="0"]', '.cm-slider-container [tabindex="0"]']
+                }, clickableDiv);
+              }
 
               ipsosHandled = true;
               checkboxMatchCount++;

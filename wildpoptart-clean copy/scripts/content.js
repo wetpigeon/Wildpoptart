@@ -1,11 +1,16 @@
 // Wildpoptart Content Script - Page Observer and Question Detector
 
-console.log('===== VERSION 5.1.2 - LEVEL 4 FULL: Fuzzy Similarity Matching =====');
+console.log('===== VERSION 5.0.0 - LEVEL 5: META-LEARNING ENGINE =====');
 console.log('📊 To export question database, type: exportDB()');
 console.log('🧬 To view self-healing stats, type: viewHealings()');
+console.log('🧠 To export learned heuristics, type: exportHeuristics()');
+console.log('📥 To import learned heuristics, type: importHeuristics(json)');
+console.log('📈 To view learning stats, type: viewLearningStats()');
 console.log('🤖 AUTO-FILL MODE: The bot will automatically progress through surveys without button clicks');
-console.log('[v5.1.2] Added Material UI checkbox fallback layer with self-healing selector learning');
-console.log('[LEVEL 4] Upgraded all text matching to use fuzzy token-based similarity (threshold: 0.8)');
+console.log('[v5.0.0] LEVEL 5 META-LEARNING: Persistent cross-session learning from mistakes');
+console.log('[v5.0.0] Dynamic confidence adjustment and auto-tuning based on success rates');
+console.log('[v5.1.2] Material UI checkbox fallback layer with self-healing selector learning');
+console.log('[LEVEL 4] Fuzzy token-based similarity matching (threshold: 0.8)');
 
 // State management
 let isActive = false;
@@ -31,6 +36,455 @@ let currentSurveySession = {
   start_time: Date.now(),
   questions: []
 };
+
+// ============================================================================
+// LEVEL 5: META-LEARNING ENGINE
+// ============================================================================
+// Persistent learning system that records successful repairs and failures,
+// applies learned rules automatically, and self-tunes parameters based on
+// success rates across sessions.
+// ============================================================================
+
+const HEURISTICS_STORAGE_KEY = 'wildpoptart_heuristics_v5';
+const LEARNING_STATS_KEY = 'wildpoptart_learning_stats_v5';
+const HEURISTICS_DECAY_DAYS = 7; // Rules older than 7 days are decayed
+const MIN_CONFIDENCE_THRESHOLD = 0.7; // Below this, auto-tune parameters
+const RULE_SIMILARITY_THRESHOLD = 0.85; // For consolidating similar rules
+
+// In-memory heuristics database (loaded from localStorage)
+let heuristicsDB = {
+  version: '5.0.0',
+  heuristics: {},
+  platformStats: {},
+  lastUpdated: new Date().toISOString()
+};
+
+// Platform/question type statistics for auto-tuning
+let learningStats = {
+  platforms: {},
+  globalStats: {
+    totalAttempts: 0,
+    totalSuccesses: 0,
+    totalFailures: 0
+  }
+};
+
+/**
+ * Load heuristics from localStorage
+ */
+function loadHeuristics() {
+  try {
+    const stored = localStorage.getItem(HEURISTICS_STORAGE_KEY);
+    if (stored) {
+      heuristicsDB = JSON.parse(stored);
+      console.log(`[META-LEARNING] Loaded ${Object.keys(heuristicsDB.heuristics || {}).length} learned rules from storage`);
+    } else {
+      console.log('[META-LEARNING] No existing heuristics found, starting fresh');
+    }
+
+    const storedStats = localStorage.getItem(LEARNING_STATS_KEY);
+    if (storedStats) {
+      learningStats = JSON.parse(storedStats);
+      console.log(`[META-LEARNING] Loaded learning stats for ${Object.keys(learningStats.platforms || {}).length} platforms`);
+    }
+
+    // Clean up old rules (decay)
+    cleanupOldHeuristics();
+  } catch (e) {
+    console.error('[META-LEARNING] Error loading heuristics:', e);
+    heuristicsDB = { version: '5.0.0', heuristics: {}, platformStats: {}, lastUpdated: new Date().toISOString() };
+  }
+}
+
+/**
+ * Save heuristics to localStorage
+ */
+function saveHeuristics() {
+  try {
+    heuristicsDB.lastUpdated = new Date().toISOString();
+    localStorage.setItem(HEURISTICS_STORAGE_KEY, JSON.stringify(heuristicsDB));
+    localStorage.setItem(LEARNING_STATS_KEY, JSON.stringify(learningStats));
+    console.log(`[META-LEARNING] Saved ${Object.keys(heuristicsDB.heuristics).length} rules to storage`);
+  } catch (e) {
+    console.error('[META-LEARNING] Error saving heuristics:', e);
+  }
+}
+
+/**
+ * Cleanup old heuristics (decay rules older than threshold)
+ */
+function cleanupOldHeuristics() {
+  const now = new Date();
+  const decayThreshold = HEURISTICS_DECAY_DAYS * 24 * 60 * 60 * 1000;
+  let removedCount = 0;
+
+  for (const [key, rule] of Object.entries(heuristicsDB.heuristics)) {
+    const lastUsed = new Date(rule.lastUsed);
+    const age = now - lastUsed;
+
+    if (age > decayThreshold && rule.confidence < 0.5) {
+      delete heuristicsDB.heuristics[key];
+      removedCount++;
+    }
+  }
+
+  if (removedCount > 0) {
+    console.log(`[META-LEARNING] Decayed ${removedCount} old/low-confidence rules`);
+    saveHeuristics();
+  }
+}
+
+/**
+ * Generate a unique key for a heuristic rule
+ */
+function generateHeuristicKey(platform, questionType, ruleType, rulePattern) {
+  return `${platform}.${questionType}.${ruleType}.${rulePattern}`;
+}
+
+/**
+ * Record a new heuristic rule or update an existing one
+ */
+function recordHeuristic(platform, questionType, ruleType, rule, success = true) {
+  const rulePattern = typeof rule === 'object' ? JSON.stringify(rule) : String(rule);
+  const key = generateHeuristicKey(platform, questionType, ruleType, rulePattern);
+
+  if (!heuristicsDB.heuristics[key]) {
+    heuristicsDB.heuristics[key] = {
+      platform,
+      questionType,
+      ruleType,
+      rule,
+      successCount: 0,
+      failureCount: 0,
+      created: new Date().toISOString(),
+      lastUsed: new Date().toISOString(),
+      confidence: 0
+    };
+    console.log(`[LEARNED_RULE_ADDED] ${platform}.${questionType}.${ruleType}: ${typeof rule === 'object' ? JSON.stringify(rule) : rule}`);
+  }
+
+  const heuristic = heuristicsDB.heuristics[key];
+
+  if (success) {
+    heuristic.successCount++;
+  } else {
+    heuristic.failureCount++;
+  }
+
+  heuristic.lastUsed = new Date().toISOString();
+  heuristic.confidence = heuristic.successCount / (heuristic.successCount + heuristic.failureCount);
+
+  saveHeuristics();
+}
+
+/**
+ * Find matching heuristic rules for a given platform/question type
+ */
+function findMatchingHeuristics(platform, questionType, ruleType) {
+  const matches = [];
+
+  for (const [key, rule] of Object.entries(heuristicsDB.heuristics)) {
+    if (rule.platform === platform &&
+        rule.questionType === questionType &&
+        rule.ruleType === ruleType &&
+        rule.confidence >= 0.5) {
+      matches.push({ key, ...rule });
+    }
+  }
+
+  // Sort by confidence (highest first)
+  matches.sort((a, b) => b.confidence - a.confidence);
+
+  return matches;
+}
+
+/**
+ * Track fill attempt outcome for platform/question type
+ */
+function trackFillAttempt(platform, questionType, success) {
+  // Update global stats
+  learningStats.globalStats.totalAttempts++;
+  if (success) {
+    learningStats.globalStats.totalSuccesses++;
+  } else {
+    learningStats.globalStats.totalFailures++;
+  }
+
+  // Update platform stats
+  if (!learningStats.platforms[platform]) {
+    learningStats.platforms[platform] = {};
+  }
+
+  if (!learningStats.platforms[platform][questionType]) {
+    learningStats.platforms[platform][questionType] = {
+      attempts: 0,
+      successes: 0,
+      failures: 0,
+      avgWaitTime: 300,
+      fuzzyThreshold: 0.8,
+      lastTuned: new Date().toISOString()
+    };
+  }
+
+  const stats = learningStats.platforms[platform][questionType];
+  stats.attempts++;
+  if (success) {
+    stats.successes++;
+  } else {
+    stats.failures++;
+  }
+
+  // Calculate success rate
+  const successRate = stats.successes / stats.attempts;
+
+  // Auto-tune if success rate is below threshold
+  if (successRate < MIN_CONFIDENCE_THRESHOLD && stats.attempts >= 5) {
+    autoTuneParameters(platform, questionType, successRate);
+  }
+
+  saveHeuristics();
+}
+
+/**
+ * Auto-tune parameters based on success rate
+ */
+function autoTuneParameters(platform, questionType, successRate) {
+  const stats = learningStats.platforms[platform][questionType];
+  const oldWaitTime = stats.avgWaitTime;
+  const oldThreshold = stats.fuzzyThreshold;
+
+  // Increase wait time by 20% if success rate is low
+  if (successRate < 0.6) {
+    stats.avgWaitTime = Math.min(stats.avgWaitTime * 1.2, 1500);
+  }
+
+  // Broaden fuzzy threshold if success rate is low
+  if (successRate < 0.65) {
+    stats.fuzzyThreshold = Math.max(stats.fuzzyThreshold - 0.05, 0.6);
+  }
+
+  stats.lastTuned = new Date().toISOString();
+
+  console.log(`[SELF-TUNED] ${platform}.${questionType}: Success rate ${(successRate * 100).toFixed(1)}% < ${(MIN_CONFIDENCE_THRESHOLD * 100)}%`);
+  console.log(`[SELF-TUNED]   Wait time: ${oldWaitTime}ms → ${stats.avgWaitTime}ms`);
+  console.log(`[SELF-TUNED]   Fuzzy threshold: ${oldThreshold.toFixed(2)} → ${stats.fuzzyThreshold.toFixed(2)}`);
+
+  saveHeuristics();
+}
+
+/**
+ * Get auto-tuned parameters for a platform/question type
+ */
+function getAutoTunedParams(platform, questionType) {
+  const stats = learningStats.platforms?.[platform]?.[questionType];
+
+  if (stats) {
+    return {
+      waitTime: stats.avgWaitTime,
+      fuzzyThreshold: stats.fuzzyThreshold
+    };
+  }
+
+  // Default values
+  return {
+    waitTime: 300,
+    fuzzyThreshold: 0.8
+  };
+}
+
+/**
+ * Consolidate similar heuristics to generalize patterns
+ */
+function consolidateHeuristics() {
+  const rules = Object.entries(heuristicsDB.heuristics);
+  let mergedCount = 0;
+
+  for (let i = 0; i < rules.length; i++) {
+    for (let j = i + 1; j < rules.length; j++) {
+      const [keyA, ruleA] = rules[i];
+      const [keyB, ruleB] = rules[j];
+
+      // Only consolidate rules for same platform/type
+      if (ruleA.platform !== ruleB.platform ||
+          ruleA.questionType !== ruleB.questionType ||
+          ruleA.ruleType !== ruleB.ruleType) {
+        continue;
+      }
+
+      // Check similarity of rule patterns
+      const patternA = JSON.stringify(ruleA.rule);
+      const patternB = JSON.stringify(ruleB.rule);
+      const sim = similarity(patternA, patternB);
+
+      if (sim >= RULE_SIMILARITY_THRESHOLD) {
+        // Merge B into A (keep higher confidence one)
+        if (ruleB.confidence > ruleA.confidence) {
+          ruleA.rule = ruleB.rule;
+        }
+        ruleA.successCount += ruleB.successCount;
+        ruleA.failureCount += ruleB.failureCount;
+        ruleA.confidence = ruleA.successCount / (ruleA.successCount + ruleA.failureCount);
+
+        delete heuristicsDB.heuristics[keyB];
+        mergedCount++;
+
+        console.log(`[META-LEARNING] Consolidated similar rules: ${keyA} ← ${keyB} (sim=${sim.toFixed(2)})`);
+      }
+    }
+  }
+
+  if (mergedCount > 0) {
+    console.log(`[META-LEARNING] Consolidated ${mergedCount} similar rules`);
+    saveHeuristics();
+  }
+}
+
+/**
+ * Export heuristics for federated learning
+ */
+function exportHeuristics() {
+  const exportData = {
+    version: heuristicsDB.version,
+    exportDate: new Date().toISOString(),
+    heuristics: heuristicsDB.heuristics,
+    platformStats: learningStats.platforms,
+    globalStats: learningStats.globalStats,
+    // Privacy: No user answers or survey content included
+    metadata: {
+      totalRules: Object.keys(heuristicsDB.heuristics).length,
+      platforms: Object.keys(learningStats.platforms),
+      totalAttempts: learningStats.globalStats.totalAttempts,
+      globalSuccessRate: (learningStats.globalStats.totalSuccesses / learningStats.globalStats.totalAttempts * 100).toFixed(1) + '%'
+    }
+  };
+
+  console.log('[META-LEARNING] Exporting heuristics...');
+  console.log(JSON.stringify(exportData, null, 2));
+
+  // Download as JSON file
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `wildpoptart_heuristics_${new Date().toISOString().split('T')[0]}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  return exportData;
+}
+
+/**
+ * Import heuristics from federated learning
+ */
+function importHeuristics(jsonData) {
+  try {
+    const imported = typeof jsonData === 'string' ? JSON.parse(jsonData) : jsonData;
+
+    console.log(`[META-LEARNING] Importing ${Object.keys(imported.heuristics || {}).length} rules...`);
+
+    // Merge imported heuristics with existing ones
+    let addedCount = 0;
+    let updatedCount = 0;
+
+    for (const [key, rule] of Object.entries(imported.heuristics || {})) {
+      if (heuristicsDB.heuristics[key]) {
+        // Merge with existing rule
+        const existing = heuristicsDB.heuristics[key];
+        existing.successCount += rule.successCount;
+        existing.failureCount += rule.failureCount;
+        existing.confidence = existing.successCount / (existing.successCount + existing.failureCount);
+        updatedCount++;
+      } else {
+        // Add new rule
+        heuristicsDB.heuristics[key] = rule;
+        addedCount++;
+      }
+    }
+
+    // Merge platform stats
+    for (const [platform, types] of Object.entries(imported.platformStats || {})) {
+      if (!learningStats.platforms[platform]) {
+        learningStats.platforms[platform] = {};
+      }
+
+      for (const [type, stats] of Object.entries(types)) {
+        if (!learningStats.platforms[platform][type]) {
+          learningStats.platforms[platform][type] = stats;
+        } else {
+          const existing = learningStats.platforms[platform][type];
+          existing.attempts += stats.attempts;
+          existing.successes += stats.successes;
+          existing.failures += stats.failures;
+        }
+      }
+    }
+
+    saveHeuristics();
+
+    console.log(`[META-LEARNING] Import complete: ${addedCount} new rules, ${updatedCount} updated rules`);
+
+    return { success: true, addedCount, updatedCount };
+  } catch (e) {
+    console.error('[META-LEARNING] Error importing heuristics:', e);
+    return { success: false, error: e.message };
+  }
+}
+
+/**
+ * View learning statistics
+ */
+function viewLearningStats() {
+  const stats = {
+    globalStats: learningStats.globalStats,
+    platforms: {},
+    topRules: []
+  };
+
+  // Platform breakdown
+  for (const [platform, types] of Object.entries(learningStats.platforms)) {
+    stats.platforms[platform] = {};
+    for (const [type, data] of Object.entries(types)) {
+      stats.platforms[platform][type] = {
+        attempts: data.attempts,
+        successRate: ((data.successes / data.attempts) * 100).toFixed(1) + '%',
+        currentWaitTime: data.avgWaitTime + 'ms',
+        currentFuzzyThreshold: data.fuzzyThreshold.toFixed(2)
+      };
+    }
+  }
+
+  // Top 10 rules by confidence
+  stats.topRules = Object.entries(heuristicsDB.heuristics)
+    .map(([key, rule]) => ({
+      key,
+      platform: rule.platform,
+      questionType: rule.questionType,
+      ruleType: rule.ruleType,
+      confidence: (rule.confidence * 100).toFixed(1) + '%',
+      uses: rule.successCount + rule.failureCount
+    }))
+    .sort((a, b) => parseFloat(b.confidence) - parseFloat(a.confidence))
+    .slice(0, 10);
+
+  console.log('=== META-LEARNING STATISTICS ===');
+  console.log(JSON.stringify(stats, null, 2));
+
+  return stats;
+}
+
+// Initialize heuristics on load
+loadHeuristics();
+
+// Periodic cleanup and consolidation (every 5 minutes)
+setInterval(() => {
+  cleanupOldHeuristics();
+  consolidateHeuristics();
+}, 5 * 60 * 1000);
+
+// Make functions globally available
+window.exportHeuristics = exportHeuristics;
+window.importHeuristics = importHeuristics;
+window.viewLearningStats = viewLearningStats;
 
 // Debug log collection
 let debugLogs = [];
@@ -1186,6 +1640,56 @@ function similarity(a, b) {
   const intersection = [...setA].filter(x => setB.has(x)).length;
 
   return intersection / Math.max(setA.size, setB.size);
+}
+
+// 🧠 LEVEL 5: Apply learned label transformations before comparison
+function applyLearnedTransformations(text, platform, questionType) {
+  let transformed = text;
+
+  // Find learned label normalization rules
+  const rules = findMatchingHeuristics(platform, questionType, 'labelNormalization');
+
+  for (const rule of rules) {
+    if (rule.confidence >= 0.7) {
+      try {
+        // Apply transformation based on rule type
+        if (rule.rule.pattern === 'remove_underscores') {
+          transformed = transformed.replace(/_/g, ' ');
+        } else if (rule.rule.pattern === 'remove_dashes') {
+          transformed = transformed.replace(/-/g, ' ');
+        } else if (rule.rule.pattern === 'remove_numbers') {
+          transformed = transformed.replace(/\d+/g, '');
+        } else if (rule.rule.transform) {
+          // Custom regex transformation
+          const regex = new RegExp(rule.rule.transform.pattern, rule.rule.transform.flags || 'g');
+          transformed = transformed.replace(regex, rule.rule.transform.replacement || '');
+        }
+      } catch (e) {
+        console.warn(`[META-LEARNING] Error applying learned transformation:`, e);
+      }
+    }
+  }
+
+  return transformed;
+}
+
+// 🧠 LEVEL 5: Similarity check with auto-tuned threshold
+function similarityMatch(a, b, platform, questionType, threshold = null) {
+  // Get auto-tuned threshold if not provided
+  const tunedThreshold = threshold !== null ? threshold : getAutoTunedParams(platform, questionType).fuzzyThreshold;
+
+  // Apply learned transformations
+  const transformedA = applyLearnedTransformations(a, platform, questionType);
+  const transformedB = applyLearnedTransformations(b, platform, questionType);
+
+  // Compute similarity
+  const sim = similarity(transformedA, transformedB);
+
+  return {
+    match: sim >= tunedThreshold,
+    score: sim,
+    threshold: tunedThreshold
+  };
 }
 
 // Detect Quest Mindshare custom div-based questions
@@ -6316,6 +6820,29 @@ async function captureDebugSnapshot() {
 
 // Fill individual question
 async function fillQuestion(question, answer) {
+  // 🧠 LEVEL 5: META-LEARNING - Detect platform and apply learned rules
+  const platform = window.selfHeal?.detectPlatform() || 'unknown';
+  const questionType = question.question_type;
+
+  console.log(`[META-LEARNING] Filling ${platform}.${questionType} question: ${question.question_id}`);
+
+  // Get auto-tuned parameters for this platform/question type
+  const tunedParams = getAutoTunedParams(platform, questionType);
+  console.log(`[META-LEARNING] Using tuned params: wait=${tunedParams.waitTime}ms, fuzzy=${tunedParams.fuzzyThreshold.toFixed(2)}`);
+
+  // Check for learned label normalization rules
+  const labelRules = findMatchingHeuristics(platform, questionType, 'labelNormalization');
+  if (labelRules.length > 0) {
+    console.log(`[LEARNED_RULE_APPLIED] Found ${labelRules.length} label normalization rule(s) for ${platform}.${questionType}`);
+    for (const rule of labelRules) {
+      console.log(`[LEARNED_RULE_APPLIED]   ${rule.ruleType}: ${JSON.stringify(rule.rule)} (confidence: ${(rule.confidence * 100).toFixed(1)}%)`);
+    }
+  }
+
+  // Track fill attempt (will be updated with success/failure at the end)
+  const fillAttemptStart = Date.now();
+  let fillSuccess = false;
+
   // For label-radio type, elements are stored differently
   const element = question.question_type === 'label-radio' ? null : question.element;
   const type = question.question_type;
@@ -7801,17 +8328,17 @@ async function fillQuestion(question, answer) {
           }
 
           // ONLY check if this radio matches AND we haven't matched yet
-          // 🔧 LEVEL 4: Use fuzzy similarity matching for radio buttons
-          const labelSim = similarity(radioAnswer, label);
-          const valueSim = value ? similarity(radioAnswer, value) : 0;
-          const cleanedSim = cleanedLabel !== normalizedLabel ? similarity(radioAnswer, cleanedLabel) : 0;
-          const maxSim = Math.max(labelSim, valueSim, cleanedSim);
-          const isMatch = maxSim > 0.8;
+          // 🧠 LEVEL 5: Use auto-tuned fuzzy matching with learned transformations
+          const labelResult = similarityMatch(radioAnswer, label, platform, questionType);
+          const valueResult = value ? similarityMatch(radioAnswer, value, platform, questionType) : { match: false, score: 0 };
+          const cleanedResult = cleanedLabel !== normalizedLabel ? similarityMatch(radioAnswer, cleanedLabel, platform, questionType) : { match: false, score: 0 };
+          const maxSim = Math.max(labelResult.score, valueResult.score, cleanedResult.score);
+          const isMatch = labelResult.match || valueResult.match || cleanedResult.match;
 
           if (isMatch && maxSim < 1.0) {
-            console.log(`[LEVEL 4 MATCH] Radio: "${label}" ↔ "${radioAnswer}" (sim=${maxSim.toFixed(2)})`);
+            console.log(`[LEVEL 5 MATCH] Radio: "${label}" ↔ "${radioAnswer}" (sim=${maxSim.toFixed(2)}, threshold=${labelResult.threshold.toFixed(2)})`);
           } else if (!isMatch && maxSim > 0.5) {
-            console.log(`[LEVEL 4 NO MATCH] Radio: "${label}" ↔ "${radioAnswer}" (sim=${maxSim.toFixed(2)})`);
+            console.log(`[LEVEL 5 NO MATCH] Radio: "${label}" ↔ "${radioAnswer}" (sim=${maxSim.toFixed(2)}, threshold=${labelResult.threshold.toFixed(2)})`);
           }
 
           if (!radioMatched && isMatch) {
@@ -8859,19 +9386,19 @@ async function fillQuestion(question, answer) {
 
           // Check if this checkbox should be checked
           // V5.1.1: Safe handling for Material UI checkboxes without value attribute
-          // 🔧 LEVEL 4: Use fuzzy similarity matching instead of strict comparisons
+          // 🧠 LEVEL 5: Use auto-tuned fuzzy matching with learned transformations
           const safeValue = value || '';
           const shouldCheck = answersArray.some(ans => {
-            const labelSim = similarity(ans, label);
-            const valueSim = safeValue ? similarity(ans, value) : 0;
-            const maxSim = Math.max(labelSim, valueSim);
-            const match = maxSim > 0.8;
+            const labelResult = similarityMatch(ans, label, platform, questionType);
+            const valueResult = safeValue ? similarityMatch(ans, value, platform, questionType) : { match: false, score: 0 };
+            const maxSim = Math.max(labelResult.score, valueResult.score);
+            const match = labelResult.match || valueResult.match;
 
             if (match) {
-              console.log(`[LEVEL 4 MATCH] "${label}" ↔ "${ans}" (sim=${maxSim.toFixed(2)})`);
+              console.log(`[LEVEL 5 MATCH] "${label}" ↔ "${ans}" (sim=${maxSim.toFixed(2)}, threshold=${labelResult.threshold.toFixed(2)})`);
             } else if (maxSim > 0.5) {
               // Log near-misses for debugging
-              console.log(`[LEVEL 4 NO MATCH] "${label}" ↔ "${ans}" (sim=${maxSim.toFixed(2)})`);
+              console.log(`[LEVEL 5 NO MATCH] "${label}" ↔ "${ans}" (sim=${maxSim.toFixed(2)}, threshold=${labelResult.threshold.toFixed(2)})`);
             }
 
             return match;
@@ -9159,16 +9686,16 @@ async function fillQuestion(question, answer) {
             const optText = opt.textContent.trim();
             const optValue = opt.value;
 
-            // 🔧 LEVEL 4: Use fuzzy similarity matching for single-select dropdowns
-            const textSim = similarity(selectAnswer, optText);
-            const valueSim = optValue ? similarity(selectAnswer, optValue) : 0;
-            const maxSim = Math.max(textSim, valueSim);
-            const isMatch = maxSim > 0.8;
+            // 🧠 LEVEL 5: Use auto-tuned fuzzy matching with learned transformations
+            const textResult = similarityMatch(selectAnswer, optText, platform, questionType);
+            const valueResult = optValue ? similarityMatch(selectAnswer, optValue, platform, questionType) : { match: false, score: 0 };
+            const maxSim = Math.max(textResult.score, valueResult.score);
+            const isMatch = textResult.match || valueResult.match;
 
             if (isMatch && maxSim < 1.0) {
-              console.log(`[LEVEL 4 MATCH] Select: "${optText}" ↔ "${selectAnswer}" (sim=${maxSim.toFixed(2)})`);
+              console.log(`[LEVEL 5 MATCH] Select: "${optText}" ↔ "${selectAnswer}" (sim=${maxSim.toFixed(2)}, threshold=${textResult.threshold.toFixed(2)})`);
             } else if (!isMatch && maxSim > 0.5) {
-              console.log(`[LEVEL 4 NO MATCH] Select: "${optText}" ↔ "${selectAnswer}" (sim=${maxSim.toFixed(2)})`);
+              console.log(`[LEVEL 5 NO MATCH] Select: "${optText}" ↔ "${selectAnswer}" (sim=${maxSim.toFixed(2)}, threshold=${textResult.threshold.toFixed(2)})`);
             }
 
             if (!selectMatched && isMatch) {
@@ -9279,6 +9806,36 @@ async function fillQuestion(question, answer) {
 
   } catch (error) {
     console.error(`Error filling question ${question.question_id}:`, error);
+    fillSuccess = false;
+
+    // 🧠 LEVEL 5: Track fill failure
+    trackFillAttempt(platform, questionType, false);
+
+    // If this was a selector issue, record it as a failed heuristic
+    if (error.message && error.message.includes('selector')) {
+      recordHeuristic(platform, questionType, 'selectorFallback', {
+        error: error.message,
+        questionId: question.question_id
+      }, false);
+    }
+
+    throw error; // Re-throw for upstream handling
+  }
+
+  // If we got here, fill was successful
+  fillSuccess = true;
+
+  // 🧠 LEVEL 5: Track fill success
+  trackFillAttempt(platform, questionType, true);
+
+  // Record successful fill time as potential learned heuristic
+  const fillDuration = Date.now() - fillAttemptStart;
+  if (fillDuration > tunedParams.waitTime * 2) {
+    // This question took longer than expected - record it for future tuning
+    recordHeuristic(platform, questionType, 'slowFill', {
+      duration: fillDuration,
+      expectedWait: tunedParams.waitTime
+    }, true);
   }
 
   // Save question to database (after successful fill)

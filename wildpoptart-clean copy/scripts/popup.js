@@ -1,7 +1,9 @@
 // Wildpoptart Popup Script
+console.log('[POPUP] Script file loaded');
 
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('[POPUP] DOM loaded, initializing...');
+  alert('[POPUP] Popup initializing - check console');
 
   // Get DOM elements
   const apiKeyInput = document.getElementById('apiKey');

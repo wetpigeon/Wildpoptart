@@ -1,10 +1,14 @@
 // Wildpoptart Content Script - Page Observer and Question Detector
 
-console.log('===== VERSION 5.1.2 - Material UI Checkbox Fallback + Self-Healing =====');
+console.log('===== VERSION 5.1.4 - Comprehensive Normalization Audit =====');
 console.log('📊 To export question database, type: exportDB()');
 console.log('🧬 To view self-healing stats, type: viewHealings()');
 console.log('🤖 AUTO-FILL MODE: The bot will automatically progress through surveys without button clicks');
-console.log('[v5.1.2] Added Material UI checkbox fallback layer with self-healing selector learning');
+console.log('[v5.1.4] Audited ALL matching logic to ensure consistent normalizeText() usage');
+console.log('[v5.1.4] Fixed checkbox, radio, select, and Material UI matching to use normalizeText()');
+console.log('[v5.1.4] Removed redundant .toLowerCase() calls after normalization');
+console.log('[v5.1.4] Added [NORMALIZED_MATCH] logging for all normalized comparisons');
+console.log('[v5.1.4] Ensures curly quotes and Unicode chars match correctly across all input types');
 
 // State management
 let isActive = false;
@@ -6722,13 +6726,13 @@ async function fillQuestion(question, answer) {
 
           // Check if this checkbox should be checked
           const shouldCheck = answersToCheck.some(ans => {
-            const answerLower = ans.toLowerCase();
+            const answerNorm = normalizeText(ans);
             return question.columns.some(col => {
-              const colLabelLower = col.label.toLowerCase();
-              const labelLower = label.toLowerCase();
-              const matches = answerLower === colLabelLower || labelLower.includes(answerLower);
+              const colLabelNorm = normalizeText(col.label);
+              const labelNorm = normalizeText(label);
+              const matches = answerNorm === colLabelNorm || labelNorm.includes(answerNorm);
               if (matches) {
-                console.log(`[MATRIX] Match found! label="${label}" matches answer="${ans}"`);
+                console.log(`[MATRIX] [NORMALIZED_MATCH] label="${label}" matches answer="${ans}"`);
               }
               return matches;
             });
@@ -6768,15 +6772,15 @@ async function fillQuestion(question, answer) {
 
           // FIXED: Compare radio button label directly against Claude's answer
           // Don't loop through all columns - that returns true if ANY column matches!
-          const answerLower = rowAnswer.answer.toLowerCase().trim();
-          const labelLower = label.toLowerCase().trim();
+          const answerNorm = normalizeText(rowAnswer.answer);
+          const labelNorm = normalizeText(label);
 
           // Use exact match only to avoid false positives
           // (e.g., "do not influence" should not match "influence")
-          const matchesAnswer = answerLower === labelLower;
+          const matchesAnswer = answerNorm === labelNorm;
 
           if (matchesAnswer) {
-            console.log(`[MATRIX] Match found! Radio label="${label}" matches answer="${rowAnswer.answer}"`);
+            console.log(`[MATRIX] [NORMALIZED_MATCH] Radio label="${label}" matches answer="${rowAnswer.answer}"`);
           }
 
           if (matchesAnswer) {
@@ -7655,29 +7659,21 @@ async function fillQuestion(question, answer) {
 
           // Find which radio button matches the answer
           let matchedRadio = null;
-          const normalizeString = (str) => str.trim()
-            .replace(/\s+/g, ' ')
-            .replace(/[\u2018\u2019]/g, "'")  // Replace smart single quotes with '
-            .replace(/[\u201C\u201D]/g, '"'); // Replace smart double quotes with "
-          const normalizedAnswer = normalizeString(radioAnswer);
+          const normalizedAnswer = normalizeText(radioAnswer);
 
           for (const radio of radioElements) {
             const label = getOptionLabel(radio);
             const value = radio.value;
-            const normalizedLabel = normalizeString(label);
-            const normalizedValue = normalizeString(value);
+            const normalizedLabel = normalizeText(label);
+            const normalizedValue = normalizeText(value);
 
             if (label === radioAnswer ||
                 value === radioAnswer ||
                 radio.id === radioAnswer ||
-                label.toLowerCase() === radioAnswer.toLowerCase() ||
-                value.toLowerCase() === radioAnswer.toLowerCase() ||
                 normalizedLabel === normalizedAnswer ||
-                normalizedLabel.toLowerCase() === normalizedAnswer.toLowerCase() ||
-                normalizedValue === normalizedAnswer ||
-                normalizedValue.toLowerCase() === normalizedAnswer.toLowerCase()) {
+                normalizedValue === normalizedAnswer) {
               matchedRadio = radio;
-              console.log(`[CAROUSEL] Matched radio input: ${radio.id}`);
+              console.log(`[CAROUSEL] [NORMALIZED_MATCH] Matched radio input: ${radio.id}`);
               break;
             }
           }
@@ -7736,23 +7732,10 @@ async function fillQuestion(question, answer) {
           // Uncheck all first
           radio.checked = false;
 
-          // 🔧 FIX: Normalize strings to handle whitespace/Unicode/quote differences
-          // Replace all whitespace (spaces, tabs, newlines, non-breaking spaces) with single space
-          // Replace smart quotes (curly quotes) with regular quotes
-          const normalizeString = (str) => {
-            // V1.9.33: Handle object labels by extracting text property
-            let text = str;
-            if (typeof str === 'object' && str !== null && str.text) {
-              text = str.text;
-            }
-            return String(text).trim()
-              .replace(/\s+/g, ' ')
-              .replace(/[\u2018\u2019]/g, "'")  // Replace ' and ' (smart single quotes) with '
-              .replace(/[\u201C\u201D]/g, '"'); // Replace " and " (smart double quotes) with "
-          };
-          const normalizedLabel = normalizeString(label);
-          const normalizedAnswer = normalizeString(radioAnswer);
-          const normalizedValue = normalizeString(value);
+          // Use normalizeText for consistent Unicode normalization
+          const normalizedLabel = normalizeText(label);
+          const normalizedAnswer = normalizeText(radioAnswer);
+          const normalizedValue = normalizeText(value);
 
           // 🔧 ANGULAR.JS FIX: Handle duplicate text in labels (e.g., "Male Male" -> "Male")
           // If label is just the same word repeated, use single instance
@@ -7799,20 +7782,16 @@ async function fillQuestion(question, answer) {
           }
 
           // ONLY check if this radio matches AND we haven't matched yet
-          // Try exact match first, then case-insensitive match, then normalized match, then cleaned label
+          // Try exact match first, then normalized match, then cleaned label
           const isMatch = label === radioAnswer ||
                          value === radioAnswer ||
                          radio.id === radioAnswer ||
-                         label.toLowerCase() === radioAnswer.toLowerCase() ||
-                         value.toLowerCase() === radioAnswer.toLowerCase() ||
                          normalizedLabel === normalizedAnswer ||
-                         normalizedLabel.toLowerCase() === normalizedAnswer.toLowerCase() ||
                          normalizedValue === normalizedAnswer ||
-                         normalizedValue.toLowerCase() === normalizedAnswer.toLowerCase() ||
-                         cleanedLabel === normalizedAnswer ||
-                         cleanedLabel.toLowerCase() === normalizedAnswer.toLowerCase();
+                         cleanedLabel === normalizedAnswer;
 
           if (!radioMatched && isMatch) {
+            console.log(`[NORMALIZED_MATCH] Radio "${radio.id}" matches answer "${radioAnswer}"`);
             console.log(`✓ Matched radio: "${label}" (value: ${value})`);
 
             // 🔧 CHECK FOR ANGULAR.JS: Detect Angular.js forms by checking for unevaluated attributes
@@ -8660,14 +8639,15 @@ async function fillQuestion(question, answer) {
                 el.querySelector('.option-text') ||
                 el.closest('.MuiListItemButton-root') ||
                 el;
-              const label = (labelEl?.innerText || labelEl?.textContent || '').trim().toLowerCase();
+              const label = (labelEl?.innerText || labelEl?.textContent || '').trim();
+              const labelNorm = normalizeText(label);
 
               answersArray.forEach(ans => {
-                const normalizedAns = (ans || '').trim().toLowerCase();
-                if (label && label.includes(normalizedAns)) {
+                const ansNorm = normalizeText(ans);
+                if (label && labelNorm.includes(ansNorm)) {
                   el.click();
                   muiMatchCount++;
-                  console.log(`[FILL] ✅ Clicked Material UI checkbox for "${normalizedAns}"`);
+                  console.log(`[FILL] [NORMALIZED_MATCH] ✅ Clicked Material UI checkbox for "${ans}"`);
 
                   // Record self-healing success
                   if (window.selfHeal) {
@@ -8846,11 +8826,18 @@ async function fillQuestion(question, answer) {
           // Check if this checkbox should be checked
           // V5.1.1: Safe handling for Material UI checkboxes without value attribute
           const safeValue = value || '';
-          const shouldCheck = answersArray.some(ans =>
-            ans === label || ans === value || ans === id ||
-            String(ans).toLowerCase() === String(label).toLowerCase() ||
-            (safeValue && String(ans).toLowerCase() === safeValue.toLowerCase())
-          );
+          const labelNorm = normalizeText(label);
+          const valueNorm = normalizeText(value);
+          const shouldCheck = answersArray.some(ans => {
+            const ansNorm = normalizeText(ans);
+            const matches = ans === label || ans === value || ans === id ||
+                           ansNorm === labelNorm ||
+                           (safeValue && ansNorm === valueNorm);
+            if (matches) {
+              console.log(`[NORMALIZED_MATCH] Checkbox "${id}" matches answer "${ans}"`);
+            }
+            return matches;
+          });
 
           console.log(`Checkbox "${id}" - label: "${label}", value: "${value}", shouldCheck: ${shouldCheck}`);
 
@@ -9087,8 +9074,12 @@ async function fillQuestion(question, answer) {
             // Check if this option matches any answer
             const isMatch = answersArray.some(ans => {
               const ansNorm = normalizeText(ans);
-              return optText === ans || optValue === ans ||
-                     optTextNorm === ansNorm || optValueNorm === ansNorm;
+              const matches = optText === ans || optValue === ans ||
+                             optTextNorm === ansNorm || optValueNorm === ansNorm;
+              if (matches) {
+                console.log(`[NORMALIZED_MATCH] Multi-select option "${optText}" matches answer "${ans}"`);
+              }
+              return matches;
             });
 
             if (isMatch) {
@@ -9136,6 +9127,7 @@ async function fillQuestion(question, answer) {
 
             if (!selectMatched && (optText === selectAnswer || optValue === selectAnswer ||
                 optTextNorm === answerNorm || optValueNorm === answerNorm)) {
+              console.log(`[NORMALIZED_MATCH] Single-select option "${optText}" matches answer "${selectAnswer}"`);
               console.log(`✓ Matched option: "${optText}" (value: ${optValue})`);
 
               // IPSOS Interactive fix (v1.9.24): Fire focus event BEFORE changing value
